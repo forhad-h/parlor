@@ -63,9 +63,25 @@ Models are downloaded automatically on first run (~2.6 GB for Gemma 4 E2B, plus 
 ## Configuration
 
 | Variable     | Default                        | Description                                    |
-| ------------ | ------------------------------ | ---------------------------------------------- |
-| `MODEL_PATH` | auto-download from HuggingFace | Path to a local `gemma-4-E2B-it.litertlm` file |
-| `PORT`       | `8000`                         | Server port                                    |
+| ------------ | ------------------------------- | ----------------------------------------------- |
+| `MODEL_PATH` | auto-download from HuggingFace  | Path to a local `gemma-4-E2B-it.litertlm` file  |
+| `PORT`       | `8000`                          | Server port                                     |
+
+## Troubleshooting
+
+### macOS: `Error processing file '.../espeak-ng-data/phontab': No such file or directory`
+
+The `espeakng-loader` PyPI package (a dependency of `misaki`, used for TTS phonemization) bundles a `libespeak-ng.dylib` for macOS that ignores the data path it's given at runtime and always looks for its own CI build path. This is an upstream packaging bug, not a local misconfiguration.
+
+**Fix:** install a correctly-built espeak-ng via Homebrew:
+
+```bash
+brew install espeak-ng
+```
+
+`tts.py` auto-detects it via `brew --prefix espeak-ng` (falling back to the default Apple Silicon/Intel Homebrew locations if `brew` isn't on `PATH`), so no further setup is needed on a standard install.
+
+This only affects macOS (the MLX backend). Linux's `kokoro-onnx` path uses a different, correctly-built `espeakng-loader` wheel and is unaffected.
 
 ## Performance (Apple M3 Pro)
 
