@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -59,7 +60,14 @@ def load_models():
     engine.__enter__()
     print("Engine loaded.")
 
-    tts_backend = tts.load()
+    try:
+        tts_backend = tts.load()
+    except RuntimeError as e:
+        # Fatal setup error (e.g. missing espeak-ng) — print just the
+        # actionable message, not a stack trace through asyncio/starlette.
+        prefix = "\033[1;31mError\033[0m" if sys.stderr.isatty() else "Error"
+        print(f"\n{prefix}: TTS setup failed\n{e}\n", file=sys.stderr)
+        os._exit(1)
 
 
 @asynccontextmanager

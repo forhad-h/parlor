@@ -2,6 +2,8 @@
 
 import os
 import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,12 +23,63 @@ class TTSBackend:
         raise NotImplementedError
 
 
+def _brew_espeak_prefix() -> Path | None:
+    """Resolve the espeak-ng Homebrew prefix, wherever brew put it."""
+    brew = shutil.which("brew")
+    if not brew:
+        return None
+    try:
+        result = subprocess.run(
+            [brew, "--prefix", "espeak-ng"], capture_output=True, text=True, timeout=5
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return Path(result.stdout.strip())
+
+
+def _fix_espeak_data_path() -> None:
+    """Point phonemizer at a Homebrew-built espeak-ng.
+
+    The espeakng-loader wheel bundles a libespeak-ng.dylib that ignores the
+    data path passed to espeak_Initialize and always looks for
+    /Users/runner/work/espeakng-loader/... (its CI build path), so misaki's
+    phonemization fails with "No such file or directory" for phontab.
+    Requires `brew install espeak-ng`.
+    """
+    import misaki.espeak  # noqa: F401  (runs its own, broken, set_library/set_data_path)
+    from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
+    candidates = []
+    brew_prefix = _brew_espeak_prefix()
+    if brew_prefix:
+        candidates.append(brew_prefix)
+    candidates += [Path("/opt/homebrew/opt/espeak-ng"), Path("/usr/local/opt/espeak-ng")]
+
+    for prefix in candidates:
+        lib = prefix / "lib" / "libespeak-ng.dylib"
+        data = prefix / "share" / "espeak-ng-data"
+        if lib.exists() and data.exists():
+            EspeakWrapper.set_library(str(lib))
+            EspeakWrapper.set_data_path(str(data))
+            return
+
+    raise RuntimeError(
+        "Could not find a working espeak-ng install for text-to-speech.\n"
+        "The espeak-ng bundled with the 'espeakng-loader' PyPI package is "
+        "broken on macOS (it ignores its data path at runtime).\n"
+        "Fix: run `brew install espeak-ng`."
+    )
+
+
 class MLXBackend(TTSBackend):
     """mlx-audio backend (Apple Silicon GPU via MLX)."""
 
     def __init__(self):
         from mlx_audio.tts.generate import load_model
 
+        _fix_espeak_data_path()
         self._model = load_model("mlx-community/Kokoro-82M-bf16")
         self.sample_rate = self._model.sample_rate
         # Warmup: triggers pipeline init (phonemizer, spacy, etc.)
