@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +35,12 @@ def resolve_model_path() -> str:
 
 
 MODEL_PATH = resolve_model_path()
+
+# Docker on macOS/Windows can't pass the host GPU through to the Linux
+# container, so default to CPU there; native macOS runs keep using Metal.
+_DEFAULT_BACKEND = "GPU" if sys.platform == "darwin" else "CPU"
+LITERT_BACKEND = getattr(litert_lm.Backend, os.environ.get("LITERT_BACKEND", _DEFAULT_BACKEND).upper())()
+
 SYSTEM_PROMPT = (
     "You are a friendly, conversational AI assistant. The user is talking to you "
     "through a microphone and showing you their camera. "
@@ -52,9 +59,9 @@ def load_models():
     print(f"Loading Gemma 4 E2B from {MODEL_PATH}...")
     engine = litert_lm.Engine(
         MODEL_PATH,
-        backend=litert_lm.Backend.GPU,
-        vision_backend=litert_lm.Backend.GPU,
-        audio_backend=litert_lm.Backend.CPU,
+        backend=LITERT_BACKEND,
+        vision_backend=LITERT_BACKEND,
+        audio_backend=litert_lm.Backend.CPU(),
     )
     engine.__enter__()
     print("Engine loaded.")

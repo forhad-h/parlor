@@ -1,0 +1,11 @@
+services:
+  parlor:
+    build:
+      context: ./src
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface

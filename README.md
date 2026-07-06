@@ -60,12 +60,30 @@ Open [http://localhost:8000](http://localhost:8000), grant camera and microphone
 
 Models are downloaded automatically on first run (~2.6 GB for Gemma 4 E2B, plus TTS models).
 
+### Run with Docker
+
+Useful if you're hitting espeak-ng / MLX install issues on macOS, or just want an isolated environment:
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:8000](http://localhost:8000) same as above. The Gemma model is re-downloaded into a named
+Docker volume on first run and cached across restarts.
+
+Note: Docker Desktop can't pass the host GPU through to the Linux container (this matters most on macOS/Windows),
+so inference runs on CPU inside Docker — expect noticeably slower responses than a native Metal-accelerated run.
+On macOS, the container also skips `mlx-audio`/`misaki` entirely (they're macOS-only) and uses `kokoro-onnx`
+instead, which bundles its own espeak-ng binary via `espeakng-loader` — sidestepping a broken system espeak-ng
+install on the host.
+
 ## Configuration
 
-| Variable     | Default                        | Description                                    |
-| ------------ | ------------------------------ | ---------------------------------------------- |
-| `MODEL_PATH` | auto-download from HuggingFace | Path to a local `gemma-4-E2B-it.litertlm` file |
-| `PORT`       | `8000`                         | Server port                                    |
+| Variable         | Default                                     | Description                                     |
+| ---------------- | -------------------------------------------- | ----------------------------------------------- |
+| `MODEL_PATH`      | auto-download from HuggingFace               | Path to a local `gemma-4-E2B-it.litertlm` file  |
+| `PORT`            | `8000`                                        | Server port                                     |
+| `LITERT_BACKEND`  | `GPU` on macOS, `CPU` elsewhere (incl. Docker) | LiteRT-LM inference backend: `GPU`, `CPU`, or `NPU` |
 
 ## Performance (Apple M3 Pro)
 
