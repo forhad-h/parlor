@@ -6,8 +6,8 @@
 <title>Parlor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Hind Siliguri renders Bengali cleanly; Latin fonts kept for the brand + numerals. -->
-<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<!-- Noto Sans Bengali renders Bengali cleanly and matches Android's system Bengali font; Latin fonts kept for the brand + numerals. -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <!-- User-facing strings — single source of truth (see strings.en.js / strings.bn.js).
      server.py picks which file backs this at request time based on run mode. -->
 <script src="/strings.js"></script>
@@ -34,7 +34,7 @@
     --glow: var(--c-loading);
     --glow-dim: var(--c-loading-dim);
 
-    --font-body: 'Hind Siliguri', 'Instrument Sans', system-ui, sans-serif;
+    --font-body: 'Noto Sans Bengali', 'Instrument Sans', system-ui, sans-serif;
     --font-display: 'Syne', system-ui, sans-serif;
   }
 
@@ -100,6 +100,12 @@
     font-weight: 600;
     color: var(--c-text-bright);
     letter-spacing: 0.01em;
+  }
+
+  .lang-badge {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--c-text-dim);
   }
 
   .model-label {
@@ -423,6 +429,7 @@
   <div class="logo">
     <div class="logo-mark"></div>
     <h1>Parlor</h1>
+    <span id="langBadge" class="lang-badge"></span>
   </div>
   <span id="modelLabel" class="model-label">Gemma 4 E2B</span>
   <div id="status" class="status-pill disconnected">Disconnected</div>
@@ -841,6 +848,7 @@ function applyStaticStrings() {
   document.documentElement.lang = STRINGS.htmlLang;
   document.title = STRINGS.title;
   $('modelLabel').textContent = STRINGS.modelLabel;
+  $('langBadge').textContent = STRINGS.langBadge;
   $('langPill').innerHTML = STRINGS.langPill;
   statusEl.textContent = STRINGS.status.disconnected;
   stateText.textContent = STRINGS.state.loading;

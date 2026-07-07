@@ -16,7 +16,11 @@ window.STRINGS = {
   // Header: model/assistant label.
   modelLabel: 'Gemma 4 E2B',
 
-  // Language chip (bottom bar). Full markup (icon + label) so each language
+  // Language badge next to the logo (header). Empty on-device — the badge
+  // exists to name a non-English UI language, which doesn't apply here.
+  langBadge: '',
+
+  // Run-mode chip (bottom bar). Full markup (icon + label) so each language
   // file owns its own pill contents.
   langPill: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="2"/><path d="M5 4V3a3 3 0 0 1 6 0v1"/></svg> On-device',
 

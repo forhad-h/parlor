@@ -21,11 +21,12 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 import httpx
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 import tts
 
@@ -155,15 +156,42 @@ async def root():
     return HTMLResponse(content=(Path(__file__).parent / "index.html").read_text())
 
 
+async def live_model_label_script() -> str:
+    """A `window.STRINGS.modelLabel` override reflecting the Node service's
+    actual configured provider/model, appended after the static Bengali
+    strings so the UI never shows a stale hardcoded name. Best-effort: on any
+    failure (Node unreachable, slow), the static file's default label stands.
+    """
+    try:
+        resp = await http_client.get(f"{NODE_SERVICE_URL}/health", timeout=2.0)
+        resp.raise_for_status()
+        data = resp.json()
+        label = f"{data['llmModelLabel']} · {data['ttsProviderLabel']} TTS"
+        return f"\nwindow.STRINGS.modelLabel = {json.dumps(label)};\n"
+    except Exception:
+        return ""
+
+
 @app.get("/strings.js")
 async def strings_js():
     # index.html always requests this one path; which language file backs it
     # depends on the run mode so the UI matches whichever backend is serving
     # turns (English on-device, Bengali hosted).
-    filename = "strings.bn.js" if HOSTED_MODE else "strings.en.js"
-    return FileResponse(
-        Path(__file__).parent / filename, media_type="application/javascript"
+    if not HOSTED_MODE:
+        return FileResponse(
+            Path(__file__).parent / "strings.en.js", media_type="application/javascript"
+        )
+
+    # read_text() off the event loop thread, to match the FileResponse branch
+    # above (which streams via a thread pool). Tradeoff: still re-reads the
+    # file on every request rather than caching it in memory — acceptable
+    # here since this is dev-server-scale traffic (one request per page load)
+    # and it keeps edits to strings.bn.js visible without a restart.
+    content = await anyio.to_thread.run_sync(
+        lambda: (Path(__file__).parent / "strings.bn.js").read_text()
     )
+    content += await live_model_label_script()
+    return Response(content=content, media_type="application/javascript")
 
 
 async def process_turn_hosted(ws: WebSocket, session_id: str, interrupted: asyncio.Event, msg: dict):

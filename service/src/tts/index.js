@@ -53,6 +53,12 @@ export function ttsProviderName() {
   return config.tts.provider;
 }
 
+/** Human-friendly rendering of ttsProviderName(), e.g. "edge" -> "Edge". */
+export function ttsProviderLabel() {
+  const name = ttsProviderName();
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 export function ttsCacheStats() {
   return cache?.stats() ?? null;
 }

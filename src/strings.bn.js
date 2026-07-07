@@ -24,14 +24,17 @@ window.STRINGS = {
   htmlLang: 'bn',
   title: 'Parlor — বাংলা কণ্ঠ-সহকারী',
 
-  // Header: model/assistant label. Kept provider-neutral (the backend model is
-  // swappable), so it names what it *is* rather than a specific model.
-  modelLabel: 'বাংলা সহকারী',
+  // Header: model/assistant label. Names the current default LLM + TTS
+  // backend (see service/.env.example for the configurable provider/model),
+  // mirroring the on-device build's static model name.
+  modelLabel: 'Gemini 2.5 Flash · Edge TTS',
 
-  // Language chip (bottom bar; replaces the original "On-device" pill, which is
-  // no longer accurate once the brain runs via hosted APIs). Full markup
-  // (icon + label) so each language file owns its own pill contents.
-  langPill: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c1.9 1.9 1.9 10.1 0 12M8 2c-1.9 1.9-1.9 10.1 0 12"/></svg> বাংলা',
+  // Language badge next to the logo (header).
+  langBadge: 'বাংলা',
+
+  // Run-mode chip (bottom bar). Full markup (icon + label) so each language
+  // file owns its own pill contents.
+  langPill: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 12.5a2.5 2.5 0 0 1 0-5 3.5 3.5 0 0 1 6.8-1.2A2.75 2.75 0 0 1 11.5 12.5h-7Z"/></svg> হোস্টেড মডেল',
 
   // Connection status pill (top-right).
   status: {

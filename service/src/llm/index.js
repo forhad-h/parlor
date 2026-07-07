@@ -65,6 +65,26 @@ export function llmProviderName() {
   return config.llm.provider;
 }
 
+/** The concrete model string for whichever provider is selected — for display/logging, not routing. */
+export function llmModelName() {
+  switch (config.llm.provider) {
+    case 'gemini':
+      return config.llm.gemini.model;
+    case 'openrouter':
+      return config.llm.openRouter.model;
+    default:
+      return config.llm.provider;
+  }
+}
+
+/** Human-friendly rendering of llmModelName(), e.g. "gemini-2.5-flash" -> "Gemini 2.5 Flash". */
+export function llmModelLabel() {
+  return llmModelName()
+    .split(/[/-]/)
+    .map((seg) => (/^[a-z]+$/i.test(seg) ? seg[0].toUpperCase() + seg.slice(1) : seg))
+    .join(' ');
+}
+
 /**
  * @param {Turn} turn
  * @returns {Promise<LlmResult>}

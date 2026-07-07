@@ -12,8 +12,8 @@ import { logger } from './logging/logger.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { promptInjectionGuard } from './middleware/promptInjectionGuard.js';
 import { converseRouter } from './routes/converse.js';
-import { llmProviderName } from './llm/index.js';
-import { ttsProviderName, ttsCacheStats } from './tts/index.js';
+import { llmProviderName, llmModelName, llmModelLabel } from './llm/index.js';
+import { ttsProviderName, ttsProviderLabel, ttsCacheStats } from './tts/index.js';
 import { ensureDurableLogReady, durableLogProviderName } from './log/index.js';
 import { ProviderError, BENGALI_ERROR_MESSAGE } from './errors.js';
 
@@ -40,7 +40,11 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     llmProvider: llmProviderName(),
+    llmModel: llmModelName(),
+    llmModelLabel: llmModelLabel(),
     ttsProvider: ttsProviderName(),
+    ttsProviderLabel: ttsProviderLabel(),
+    ttsVoice: config.tts.voice,
     durableLogProvider: durableLogProviderName(),
     uptimeSec: Math.round(process.uptime()),
     cache: { tts: ttsCacheStats() },
