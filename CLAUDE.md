@@ -47,6 +47,20 @@ Setup/run instructions: see README.md's "Bengali mode" section and
 - **Node:** ES modules, camelCase, one provider per file implementing the
   interface. New provider = new file + one `case` in the factory + an env value.
   Never inline prompt text or provider specifics into `routes/converse.js`.
+- **No provider- or model-specific comments in shared files.** Shared files
+  used by every provider (`llm/index.js`, `tts/index.js`, `prompts/bengali.js`,
+  and any other factory or shared-type file) must describe behavior generically
+  and never name a *specific* concrete provider or model (e.g. "OpenRouter has
+  no native safety passthrough" written into `llm/index.js`'s `SafetySignal`
+  typedef, or "gemini-2.0-flash follows English meta-instructions more
+  reliably" written into `prompts/bengali.js`). A provider's or model's own
+  quirks belong only in that provider's own file — otherwise the shared-file
+  comment goes stale every time a provider is added, removed, or swapped to a
+  different underlying model, even though the code itself didn't need to
+  change. If a shared file must say something general, phrase it in terms of a
+  category ("LLMs", "providers with no native safety classifier") or point
+  elsewhere ("see each provider's file for how it populates this") instead of
+  naming names.
 - **Python:** match the existing snake_case and the existing print/log style
   (`f"LLM ({t:.2f}s) [tool] ..."`). Keep the diff minimal; new logic belongs in
   Node, not Python.

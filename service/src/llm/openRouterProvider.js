@@ -97,9 +97,12 @@ export class OpenRouterProvider {
       completionTokens: data?.usage?.completion_tokens ?? null,
     };
 
+    // OpenRouter has no native safety-settings passthrough (its docs expose only
+    // Anthropic beta headers), so safety here is null — the prompt-level rule in
+    // prompts/bengali.js is this provider's only safety layer.
     const parsed = parseJsonObject(message?.content);
     if (parsed && 'transcription' in parsed && 'response' in parsed) {
-      return { transcription: cleanText(parsed.transcription), responseText: cleanText(parsed.response), usage };
+      return { transcription: cleanText(parsed.transcription), responseText: cleanText(parsed.response), usage, safety: null };
     }
 
     const fallback = cleanText(message?.content);
@@ -110,7 +113,7 @@ export class OpenRouterProvider {
         retryable: false,
       });
     }
-    return { transcription: null, responseText: fallback, usage };
+    return { transcription: null, responseText: fallback, usage, safety: null };
   }
 }
 

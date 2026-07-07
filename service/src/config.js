@@ -50,6 +50,21 @@ export const config = Object.freeze({
     }),
   }),
 
+  // Shared safety knob for BOTH directions of a turn — input (promptInjectionGuard,
+  // pre-LLM) and output (Gemini's safety classifier, post-LLM). Defaults to 'log' on
+  // purpose: both signals are heuristics/classifiers weaker on Bengali than the
+  // prompt-level safety rule that's the real-time layer in either mode (see
+  // routes/converse.js for the full rationale), so we measure real false-positive
+  // rates from logs before ever letting either one block a genuine turn. Flip to
+  // 'block' to speak a Bengali refusal (prompts/bengali.js SAFE_REFUSAL) instead —
+  // for input, that skips the LLM call entirely; for output, it replaces the
+  // flagged reply. (Gemini's own safety threshold stays hardcoded non-cutting in
+  // geminiProvider.js — a real Gemini-side block empties the response and breaks
+  // our JSON-per-turn contract, so blocking only ever happens in converse.js.)
+  safety: Object.freeze({
+    mode: str('SAFETY_MODE', 'log').toLowerCase(),
+  }),
+
   tts: Object.freeze({
     provider: str('TTS_PROVIDER', 'edge').toLowerCase(),
     voice: str('TTS_VOICE', 'bn-BD-NabanitaNeural'),
@@ -101,6 +116,10 @@ export function validate() {
     for (const [name, value] of ttsKeys) {
       if (!value) problems.push(`TTS_PROVIDER=${config.tts.provider} requires ${name}`);
     }
+  }
+
+  if (config.safety.mode !== 'log' && config.safety.mode !== 'block') {
+    problems.push(`SAFETY_MODE must be 'log' or 'block' (got "${config.safety.mode}")`);
   }
 
   if (problems.length > 0) {

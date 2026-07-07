@@ -184,11 +184,32 @@ once before shipping; fixes are one-line edits to the source string files.
   `429` + `Retry-After` past the threshold. The threshold has enough headroom
   that normal demo/grading usage never comes close to it — this is real
   cost/rate-limit control on the paid LLM/TTS providers, not just a log line.
-- **Prompt-injection heuristic** (`middleware/promptInjectionGuard.js`) is
-  **log-only for now**: it's keyword/regex matching, so blocking on it today
-  risks a false positive killing a legitimate conversation turn. Turning it
-  into a real gate, alongside heavier moderation (profanity, content
-  classification), is intentionally deferred — see Future improvements.
+- **Safety** has a primary layer plus two secondary layers sharing one knob,
+  `SAFETY_MODE` (default `log`). The **primary** layer is a prompt-level safety
+  rule in `prompts/bengali.js` (the model refusing in-language — low
+  false-positive, and the only safety layer OpenRouter gets, since it has no
+  native safety passthrough) — this is always on, in both modes, regardless of
+  `SAFETY_MODE`.
+  - **Input side**: `middleware/promptInjectionGuard.js` is keyword/regex
+    matching, so it only *detects* and attaches `req.promptInjection` — it
+    never blocks itself, since blocking on a heuristic false positive would
+    kill a legitimate turn with no graceful reply. `converse.js` reads the
+    flag: in `log` mode it just logs `possible prompt-injection flagged`; in
+    `block` mode it skips the LLM call entirely and speaks `SAFE_REFUSAL`
+    instead, so a blocked turn still returns a normal (if canned) audio
+    response rather than breaking the wire contract.
+  - **Output side**: Gemini's native `safetySettings`, wired at a non-cutting
+    threshold (`BLOCK_NONE`) so it never breaks a turn: it's read for its
+    `safetyRatings` and, when a category rates MEDIUM+, `converse.js` logs
+    `unsafe content flagged`. In `block` mode it swaps `SAFE_REFUSAL` in for
+    the flagged reply. Blocking lives in `converse.js`, **not** in the Gemini
+    threshold: a native block empties the response and breaks the
+    JSON-per-turn contract. OpenRouter has no native safety passthrough (its
+    API exposes only Anthropic beta headers), so it only has the primary layer.
+  - Both signals default to log-only for the same reason: they're
+    weaker/less-calibrated on Bengali than the prompt rule, so we measure real
+    false-positive rates from logs before ever letting either one block a
+    genuine turn.
 
 ## Testing
 
@@ -214,7 +235,7 @@ service/
 │   ├── prompts/bengali.js     LLM strings — single source of truth
 │   ├── text/sentenceSplit.js  Bengali-aware chunking
 │   ├── session/history.js     per-session text history (in-memory)
-│   ├── middleware/            rateLimit (enforced) · promptInjectionGuard (log-only)
+│   ├── middleware/            rateLimit (enforced) · promptInjectionGuard (detects; gated by SAFETY_MODE)
 │   ├── logging/logger.js      structured JSON logs
 │   └── util/                  audio (transcode/resample) · cache · retry
 ├── tools/bengaliReview.js     pre-submission Bengali QA pass
@@ -228,6 +249,10 @@ service/
   ElevenLabs TTS) — additive, no call-site changes.
 - Streaming `/converse` (Server-Sent Events) so the browser gets sentence audio
   as each finishes, restoring true progressive playback across the network hop.
-- Complete input validation and blocking: turn the log-only prompt-injection
-  guard into a real gate, and add the moderation checks intentionally left out
-  of this scope (profanity filter, content classification, etc.).
+- Enforce safety: once the `possible prompt-injection flagged` / `unsafe
+  content flagged` logs show an acceptable false-positive rate on real Bengali
+  traffic, flip `SAFETY_MODE=block` (both block paths are already wired). Also
+  add the moderation checks intentionally left out of this scope (profanity
+  filter, content classification, etc.) — the regex heuristic is a stand-in,
+  not a real classifier. A cross-provider moderation classifier could then give
+  OpenRouter the native-safety signal it currently lacks.

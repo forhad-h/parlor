@@ -43,7 +43,7 @@ app.get('/health', (req, res) => {
 
 // ── Application middleware + routes ─────────────────────────────────────────
 app.use(rateLimit); // enforced (429 past threshold)
-app.use(promptInjectionGuard); // log-only
+app.use(promptInjectionGuard); // detection-only; converse.js decides log vs block via SAFETY_MODE
 app.use(converseRouter);
 
 // 404

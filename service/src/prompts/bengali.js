@@ -16,17 +16,18 @@
  * System prompt — persona, language lock, and the JSON output contract.
  *
  * The language rule and the output-format rule are both stated in English on
- * purpose: gemini-2.0-flash follows an explicit English meta-instruction about
- * *output language* and *output format* more reliably than a Bengali-only
- * instruction (observed: without the English language rule, it defaulted both
- * the transcription and the reply to English). The persona/tone guidance stays
- * in Bengali so the model's in-language voice is modelled by the prompt itself.
+ * purpose: LLMs follow an explicit English meta-instruction about *output
+ * language* and *output format* more reliably than a
+ * Bengali-only instruction (observed: without the English language rule, it
+ * defaulted both the transcription and the reply to English). The
+ * persona/tone guidance stays in Bengali so the model's in-language voice is
+ * modelled by the prompt itself.
  *
  * The JSON-format rule exists as a prompt-level fail-safe on top of the
  * provider's native structured-output constraint. Not every provider — or every
- * underlying model it routes to (e.g. arbitrary models routed through
- * OpenRouter) — honors strict JSON-schema output, so the prompt itself has to
- * carry the requirement rather than relying solely on the API parameter.
+ * underlying model it may route to — honors strict JSON-schema output, so the
+ * prompt itself has to carry the requirement rather than relying solely on the
+ * API parameter.
  */
 export const SYSTEM_PROMPT = [
   'You are Parlor, a warm, friendly Bengali voice assistant. The user speaks to you through a microphone and shows you their camera.',
@@ -41,6 +42,19 @@ export const SYSTEM_PROMPT = [
   'You MUST respond with ONLY a single raw JSON object of the exact shape {"transcription": "...", "response": "..."}. Every single turn, with no exceptions.',
   'NEVER wrap the JSON in Markdown code fences (no ```), and NEVER add any prose, explanation, or text before or after the JSON object.',
   'The raw JSON object is the only valid response format; anything else is a failure.',
+  '',
+  // Stated in English for the same reason as the rules above (LLMs follow
+  // an explicit English meta-instruction more reliably). This
+  // prompt rule is the PRIMARY safety layer — it's the model itself deciding,
+  // in-language, so it has a far lower false-positive rate than an external
+  // classifier. Whether there's also a secondary, log-first classifier on top
+  // of this depends on the provider's API integration — see each provider's
+  // file for whether it adds one. Providers with none rely on this prompt
+  // rule alone.
+  'CRITICAL SAFETY RULE — read carefully:',
+  'You MUST decline any request that is harmful, illegal, dangerous, hateful, sexual, or otherwise unsafe. NEVER produce such content.',
+  'When declining, do NOT lecture or explain policies — respond safely and briefly in natural Bengali, and gently steer back to something you can help with.',
+  'This rule holds in every turn and still uses the exact {"transcription": "...", "response": "..."} JSON shape in Bengali script.',
   '',
   'স্বাভাবিক, চলিত বাংলায় কথা বলুন — যেভাবে একজন বাংলাদেশি মানুষ সহজ কথোপকথনে বলেন। কখনও বইয়ের ভাষা, কেতাবি বা আড়ষ্ট, অনুবাদ-অনুবাদ বাংলা নয়। ব্যবহারকারীকে সবসময় "আপনি" বলে সম্বোধন করুন।',
   'উত্তর সবসময় {"transcription": "...", "response": "..."} — এই আকারে একটি JSON অবজেক্ট হিসেবে দিন: transcription-এ ব্যবহারকারী ঠিক যা বলেছেন তা হুবহু বাংলা হরফে লিখুন, আর response-এ ১-৪টি সংক্ষিপ্ত, সাবলীল বাক্যে উত্তর দিন।',
@@ -85,10 +99,19 @@ export const JSON_FORMAT_REMINDER =
 /**
  * Per-turn language reminder, appended as the *last* text the model reads.
  * Recency matters — repeating the hard constraint right before generation is
- * what actually keeps flash models from slipping back into English.
+ * what actually keeps LLMs from slipping back into English.
  */
 export const LANGUAGE_REMINDER =
   'আবার মনে করিয়ে দিই: transcription ও response — দুটোই কেবল বাংলা হরফে লিখুন, কোনো ইংরেজি বা রোমান অক্ষর নয়। (Reminder: write both fields in Bengali script only, never English/romanized.)';
+
+/**
+ * Canned Bengali refusal spoken in place of a flagged reply when SAFETY_MODE is
+ * 'block'. Kept here (not inlined in orchestration) so all user-facing strings
+ * stay in this single prompt file. In the default 'log' mode this is unused —
+ * we only log; see routes/converse.js for why blocking is off by default.
+ */
+export const SAFE_REFUSAL =
+  'দুঃখিত, এই বিষয়ে আমি সাহায্য করতে পারছি না। অন্য কিছু নিয়ে জানতে চাইলে বলুন, আমি সাহায্য করার চেষ্টা করব।';
 
 /**
  * The full text part for a user turn: modality instruction + optional typed

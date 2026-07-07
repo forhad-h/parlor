@@ -11,11 +11,31 @@
  * inlineData parts, matching the audio/image shape the browser already sends.
  */
 
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import { SYSTEM_PROMPT, RESPONSE_SCHEMA, buildTurnText } from '../prompts/bengali.js';
 import { ProviderError } from '../errors.js';
 import { cleanText } from '../text/cleanText.js';
 import { parseJsonObject } from '../text/parseJsonObject.js';
+
+/**
+ * Native Gemini safety config — a SECONDARY, observability-first layer on top of
+ * the prompt-level safety rule (see prompts/bengali.js). The threshold is fixed
+ * at BLOCK_NONE, not configurable: if Gemini actually blocks, it returns an
+ * empty body, `res.text` is empty, and we fall through to the throw below — a
+ * broken turn with no graceful refusal, which defeats the whole point of
+ * guaranteeing a response every turn. So we always let generation complete and
+ * only READ the ratings; the real block decision (speaking SAFE_REFUSAL) lives
+ * in routes/converse.js, gated by SAFETY_MODE (see config.js).
+ */
+const SAFETY_CATEGORIES = [
+  HarmCategory.HARM_CATEGORY_HARASSMENT,
+  HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+  HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+  HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+];
+
+/** Probabilities that count as "flagged" — MEDIUM and above, matching Gemini's own default block threshold. */
+const FLAG_PROBABILITIES = new Set(['MEDIUM', 'HIGH']);
 
 /** Loose classification: rate-limit / transient server / network errors are worth a retry. */
 function isRetryable(err) {
@@ -31,6 +51,10 @@ export class GeminiProvider {
     this.model = model;
     this.temperature = temperature;
     this.client = new GoogleGenAI({ apiKey });
+    this.safetySettings = SAFETY_CATEGORIES.map((category) => ({
+      category,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
+    }));
     this.responseSchema = {
       type: Type.OBJECT,
       description: RESPONSE_SCHEMA.description,
@@ -61,6 +85,7 @@ export class GeminiProvider {
           temperature: this.temperature,
           responseMimeType: 'application/json',
           responseSchema: this.responseSchema,
+          safetySettings: this.safetySettings,
           abortSignal: signal,
         },
       });
@@ -77,6 +102,7 @@ export class GeminiProvider {
       promptTokens: res?.usageMetadata?.promptTokenCount ?? null,
       completionTokens: res?.usageMetadata?.candidatesTokenCount ?? null,
     };
+    const safety = extractSafety(res, this.name);
 
     const parsed = parseJsonObject(res?.text);
     if (parsed && 'transcription' in parsed && 'response' in parsed) {
@@ -84,6 +110,7 @@ export class GeminiProvider {
         transcription: cleanText(parsed.transcription),
         responseText: cleanText(parsed.response),
         usage,
+        safety,
       };
     }
 
@@ -97,8 +124,35 @@ export class GeminiProvider {
         retryable: false,
       });
     }
-    return { transcription: null, responseText: fallback, usage };
+    return { transcription: null, responseText: fallback, usage, safety };
   }
+}
+
+/**
+ * Normalize Gemini's native safety signal into the compact, provider-agnostic
+ * shape converse.js consumes (see the LlmResult typedef in index.js). Everything
+ * is null-guarded — safetyRatings can be absent on some responses — and defaults
+ * to not-flagged. `flagged` keys off probability (MEDIUM+), independent of the
+ * BLOCK_NONE threshold, so we get a "would-block" awareness signal without any
+ * turn being cut. See config.js / converse.js for why this is log-first.
+ */
+export function extractSafety(res, provider) {
+  const candidate = res?.candidates?.[0];
+  const ratings = candidate?.safetyRatings ?? [];
+  const finishReason = candidate?.finishReason ?? null;
+  const blockReason = res?.promptFeedback?.blockReason ?? null;
+
+  const categories = ratings
+    .filter((r) => r?.probability && r.probability !== 'NEGLIGIBLE')
+    .map((r) => ({ category: r.category, probability: r.probability }));
+  const blocked = ratings.some((r) => r?.blocked === true);
+  const flagged =
+    !!blockReason ||
+    finishReason === 'SAFETY' ||
+    blocked ||
+    ratings.some((r) => FLAG_PROBABILITIES.has(r?.probability));
+
+  return { flagged, provider, categories, blocked, finishReason, blockReason };
 }
 
 /** Build Gemini `contents` from text-only history plus the current multimodal turn. */

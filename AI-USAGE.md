@@ -92,6 +92,17 @@ I restructured several things after review:
   on a false positive. Turning it into a real gate, plus fuller input
   validation (profanity/content moderation), is called out as future work in
   `service/README.md`.
+- Added **output safety** with the same log-first stance. The primary layer is a
+  prompt-level safety rule (the model refusing in-language — lowest false-positive
+  and the only safety layer OpenRouter gets). On top of that I wired Gemini's
+  native `safetySettings` at a non-cutting threshold as a secondary signal: it's
+  read, not enforced, and `converse.js` logs `unsafe content flagged` on MEDIUM+
+  ratings. It's log-only by default because that classifier is a *separate model*,
+  weaker/less-calibrated on Bengali — so I want to measure its real false-positive
+  rate before letting it block a genuine turn. The block path (`SAFETY_MODE=block`
+  → speak `SAFE_REFUSAL`) is wired and off by default; blocking lives in code, not
+  in the Gemini threshold, because a native block empties the response and breaks
+  the JSON-per-turn contract.
 
 ## 5. Localization (Bengali)
 

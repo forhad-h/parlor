@@ -15,10 +15,21 @@
  * @property {string} [imageMime]    defaults to "image/jpeg"
  * @property {string} [text]         typed text (when present)
  *
+ * @typedef {Object} SafetySignal
+ * @property {boolean} flagged            MEDIUM+ rating, blocked, or a block reason
+ * @property {string} provider            which provider produced the signal
+ * @property {Array<{category:string, probability:string}>} categories  non-NEGLIGIBLE ratings
+ * @property {boolean} blocked            any rating.blocked === true
+ * @property {string|null} finishReason   e.g. 'STOP' | 'SAFETY'
+ * @property {string|null} blockReason    promptFeedback.blockReason (input side)
+ *
  * @typedef {Object} LlmResult
  * @property {string|null} transcription  what the user said (null if none)
  * @property {string} responseText        the assistant's Bengali reply
  * @property {{promptTokens:number|null, completionTokens:number|null}} usage
+ * @property {SafetySignal|null} [safety]  native provider safety signal, or null
+ *   when the provider has none — see each provider's file for how (or
+ *   whether) it populates this. Consumed log-first in converse.js.
  */
 
 import { config } from '../config.js';

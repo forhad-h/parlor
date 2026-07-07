@@ -1,18 +1,17 @@
 /**
- * Lightweight prompt-injection heuristic — LOG-ONLY for now, by design.
+ * Lightweight prompt-injection heuristic — detection only, no decision-making.
  *
- * This is a safety-awareness signal, not a gate: it's keyword/regex matching,
- * so false positives on legitimate conversational text (including Bengali)
- * are a real risk, and blocking on it today would risk killing a genuine turn
- * for a heuristic false-positive. It scans typed `text` for common override
- * patterns and logs a warning; it never blocks, rewrites, or fails the
- * request. Audio is not transcribed at this layer, so only the text channel
- * is inspected. Turning this into a real gate — alongside heavier moderation
- * like profanity/content classification — is explicitly scoped as future
- * work; see "Future Improvements" in the README.
+ * This is keyword/regex matching, so false positives on legitimate conversational
+ * text (including Bengali) are a real risk. Rather than gate here, this middleware
+ * just scans typed `text` and attaches the result to `req.promptInjection`; it
+ * always calls `next()`. The log-vs-block decision lives in routes/converse.js,
+ * gated by the shared `SAFETY_MODE` (config.safety.mode) — the same knob that
+ * gates the output-side Gemini safety signal. Keeping the decision there (not
+ * here) means a block still flows through the normal TTS/response path (speaking
+ * SAFE_REFUSAL) instead of a bare early-return that would break the
+ * transcription/responseText/chunks wire contract. Audio is not transcribed at
+ * this layer, so only the text channel is inspected.
  */
-
-import { logger } from '../logging/logger.js';
 
 const PATTERNS = [
   /ignore (all |the |your |previous )?(prior |above |earlier )?instructions/i,
@@ -25,17 +24,16 @@ const PATTERNS = [
   /\bDAN\b/,
 ];
 
-export function promptInjectionGuard(req, res, next) {
-  const text = req.body?.text;
-  if (typeof text === 'string' && text.length > 0) {
-    const hits = PATTERNS.filter((p) => p.test(text)).map((p) => p.source);
-    if (hits.length > 0) {
-      logger.warn('possible prompt-injection (log-only, not blocking)', {
-        sessionId: req.body?.sessionId ?? null,
-        hits,
-        sample: text.slice(0, 120),
-      });
-    }
+/** Pure detector, kept separate from the Express plumbing so it's directly unit-testable. */
+export function detectPromptInjection(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { flagged: false, hits: [], sample: null };
   }
+  const hits = PATTERNS.filter((p) => p.test(text)).map((p) => p.source);
+  return { flagged: hits.length > 0, hits, sample: hits.length > 0 ? text.slice(0, 120) : null };
+}
+
+export function promptInjectionGuard(req, res, next) {
+  req.promptInjection = detectPromptInjection(req.body?.text);
   next();
 }

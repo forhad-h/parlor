@@ -23,6 +23,7 @@ export class MockProvider {
       transcription: turn.text ?? '(ভয়েস বার্তা)',
       responseText,
       usage: { promptTokens: 0, completionTokens: 0 },
+      safety: null, // canned stub — no real generation, so no safety signal applies
     };
   }
 }
