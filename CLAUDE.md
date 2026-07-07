@@ -27,7 +27,8 @@ Setup/run instructions: see README.md's "Bengali mode" section and
 - Client→server WS: `{ text | audio(b64 wav) | image(b64 jpeg) | interrupt }`
 - server→client WS (one turn): `text` → `audio_start` → `audio_chunk`×N → `audio_end`
 - server.py→Node: `POST /converse { sessionId, text?, audioBase64?, imageBase64? }`
-- Node→server.py: `{ transcription, responseText, sampleRate, chunks:[{index,audioBase64}], timings }`
+- Node→server.py: **NDJSON stream** (newline-delimited JSON, one object per line, media type `application/x-ndjson`, in playback order):
+  `{type:text, transcription, responseText, llmMs}` → `{type:audio_start, sampleRate, sentenceCount}` → `{type:audio_chunk, index, audioBase64}`×N → `{type:done, ttsMs}`. A failure before the stream opens is a normal non-200 JSON with `bengaliMessage`; a mid-stream failure arrives as `{type:error, bengaliMessage}`. server.py relays each event into the server→client WS frames above as it arrives (progressive audio; see `service/README.md` Design decisions).
 
 ## Where things live
 

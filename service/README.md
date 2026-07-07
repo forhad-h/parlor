@@ -21,10 +21,11 @@ Node service/  ← you are here
    ├─ tts/                 hosted TTS (Edge neural voices) → PCM16
    ├─ log/                 durable event persistence (today: flagged safety events)
    ├─ util/audio.js        MP3 → PCM16 transcode + resample
-   └─ routes/converse.js   orchestration → one JSON payload
-   │  200 { transcription, responseText, sampleRate, chunks:[{index,audioBase64}], timings }
+   └─ routes/converse.js   orchestration → NDJSON event stream
+   │  200 application/x-ndjson (NDJSON), one JSON object per line, in playback order:
+   │    {type:text} · {type:audio_start} · {type:audio_chunk}×N · {type:done}   (or {type:error})
    ▼
-Python relays into the existing WS frames → browser plays audio exactly as before
+Python relays each event into the existing WS frames as it arrives → progressive audio
 ```
 
 ## Quick start
@@ -126,6 +127,41 @@ LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-2.5-pro npm start
   `.?!`; Bengali's sentence terminator is the danda `।`. Without handling it a
   whole Bengali reply arrives as one chunk and the perceived-streaming UX
   collapses. See `text/sentenceSplit.js`.
+- **Streaming `/converse` (progressive audio across the network hop).**
+  `converse.js` streams the turn back as **NDJSON** (newline-delimited JSON,
+  media type `application/x-ndjson` — the same line-per-object shape the
+  durable log's JSONL uses, but named NDJSON here since it's a live stream
+  rather than an on-disk log) — one event per line
+  (`text` → `audio_start` → `audio_chunk`×N → `done`) — instead of buffering a
+  single JSON payload, and `server.py` relays each event into the browser WS
+  frames *as it arrives*. So the first sentence plays while later ones are still
+  synthesizing. (The browser already played each `audio_chunk` on arrival; the
+  only barrier was server-side — Node's `Promise.allSettled` waiting for the
+  slowest sentence, then Python's `resp.json()` waiting for the whole body.) The
+  per-sentence TTS still fans out concurrently, but the promises are drained
+  **in sentence order** so audio is emitted gaplessly and in-order; a failed
+  sentence is dropped while the surviving `index` stays gapless.
+  - **Measured benefit:** in a 3-sentence localhost turn, first audio reaches the
+    browser **~0.15 s (~18%) sooner**. The saving equals
+    `slowest_sentence_TTS − first_sentence_TTS` (the "wait for the slowest
+    sentence" barrier; the Python↔Node transfer term is ~0 on localhost), so it
+    **grows with reply length and sentence-length variance** — roughly
+    **0.3–0.6 s** earlier first-audio for typical multi-sentence Bengali replies,
+    and it also just *feels* more alive (audio trickles in vs. a silent pause
+    then a block).
+  - **Ceiling (honest):** the LLM leg is still one non-streamed call, so this
+    shaves the TTS barrier, **not** the ~1–2 s LLM latency — first audio can't
+    start until the full reply text exists. Streaming the LLM itself
+    (token → sentence-boundary → TTS) is the next lever and a larger change,
+    since it fights the JSON-schema-constrained `{transcription, response}`
+    output.
+  - **Cancellation bonus:** on barge-in `server.py` stops reading and closes the
+    stream, which Node detects (`res.on('close')`) and uses to stop synthesizing
+    the rest of the turn — real cross-process cancellation, versus the old
+    fire-and-forget request that ran to completion and was discarded.
+  - **Error path splits by timing:** a failure *before* the stream opens still
+    returns a normal non-200 JSON with a Bengali apology; *mid-stream* (headers
+    already sent) it arrives as a `{type:error, bengaliMessage}` event instead.
 - **MP3 → PCM16 transcode is load-bearing.** The browser decodes each
   `audio_chunk` as raw PCM16 at the `audio_start` sample rate. This build of
   `msedge-tts` only emits compressed audio, so `util/audio.js` decodes MP3 to
@@ -263,8 +299,11 @@ service/
   deployments on ephemeral filesystems, where the `file` provider's data
   doesn't survive a redeploy or restart — same additive shape as any other
   provider swap.
-- Streaming `/converse` (Server-Sent Events) so the browser gets sentence audio
-  as each finishes, restoring true progressive playback across the network hop.
+- Stream the **LLM** leg too (token → sentence-boundary → TTS), so the first
+  sentence's audio can start before the whole reply text is generated — the one
+  latency lever the current TTS-only streaming (see Design decisions) leaves on
+  the table. Larger change: it fights the JSON-schema-constrained
+  `{transcription, response}` output the turn currently relies on.
 - Enforce safety: once the `possible prompt-injection flagged` / `unsafe
   content flagged` logs show an acceptable false-positive rate on real Bengali
   traffic, flip `SAFETY_MODE=block` (both block paths are already wired). Also

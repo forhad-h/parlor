@@ -170,25 +170,24 @@ async def process_turn_hosted(ws: WebSocket, session_id: str, interrupted: async
     """One turn via the Node service, relayed into the existing WS frames.
 
     Barge-in is when the user starts speaking again before the assistant
-    finishes; that sets the `interrupted` event. We run the Node call as a
-    task (instead of a plain await) so we can wait on it and `interrupted`
-    together and react to whichever happens first. If the user barges in
-    first, we cancel the task and return early, before sending anything.
-    (We also re-check `interrupted` at every later send point, in case the
-    user barges in *after* the Node call already finished.)
+    finishes; that sets the `interrupted` event. We consume the Node response as
+    a stream (NDJSON — one event per line) and relay each event into the browser
+    WS frames as it arrives, so the first sentence's audio plays while later
+    sentences are still being synthesized (progressive playback across the
+    network hop). Every line-read races the `interrupted` event: on a barge-in we
+    stop reading and let the stream context close the connection, which Node
+    detects (res.on('close')) and uses to stop synthesizing the rest of the turn.
+    So — unlike a plain request/response — in-flight TTS work is actually
+    cancelled cross-process, not just discarded locally.
 
-    Two known limitations from this being a *local* cancellation only:
-    1. Cancelling `convo_task` just stops us from awaiting it — the HTTP
-       request already sent to Node keeps running there to completion. We pay
-       for and discard that LLM+TTS work. Building real cross-process
-       cancellation (e.g. an abort signal to Node) would avoid this but adds
-       real complexity, so it's an accepted cost, not a bug.
-    2. Node's `/converse` handler saves the user+model turn to session history
-       (see appendTurn in converse.js) as soon as its LLM call returns, *before*
-       it knows whether the client later interrupted. So an interrupted turn
-       the user never actually heard can still end up in the conversation
-       history Node uses for the *next* turn's context — a discarded reply can
-       silently influence what the assistant says afterward.
+    One residual limitation: Node's `/converse` handler saves the user+model turn
+    to session history (see appendTurn in converse.js) as soon as its LLM call
+    returns, *before* it knows whether the client later interrupted. So an
+    interrupted turn the user never actually heard can still end up in the
+    conversation history Node uses for the *next* turn's context — a discarded
+    reply can silently influence what the assistant says afterward. (The LLM leg
+    also still runs to completion on an early barge-in: Node emits nothing until
+    the reply text is ready, so only the TTS leg is cancellable mid-turn.)
     """
     payload = {"sessionId": session_id}
     if msg.get("audio"):
@@ -198,77 +197,91 @@ async def process_turn_hosted(ws: WebSocket, session_id: str, interrupted: async
     if msg.get("text"):
         payload["text"] = msg["text"]
 
-    convo_task = asyncio.create_task(
-        http_client.post(f"{NODE_SERVICE_URL}/converse", json=payload)
-    )
-    interrupt_task = asyncio.create_task(interrupted.wait())
-    done, _ = await asyncio.wait(
-        {convo_task, interrupt_task}, return_when=asyncio.FIRST_COMPLETED
-    )
-
-    if convo_task not in done:
-        convo_task.cancel()
-        print("Interrupted during Node call, discarding in-flight request")
-        return
-    interrupt_task.cancel()
-
+    chunk_count = 0
     try:
-        resp = convo_task.result()
-        resp.raise_for_status()
-        result = resp.json()
-    except Exception as e:
-        bengali = BENGALI_ERROR_MESSAGE
-        if isinstance(e, httpx.HTTPStatusError):
+        async with http_client.stream(
+            "POST", f"{NODE_SERVICE_URL}/converse", json=payload
+        ) as resp:
+            # Pre-stream failure: Node returns a normal non-200 JSON error (the
+            # status/headers arrive before any event line) carrying a Bengali
+            # apology for us to speak.
+            if resp.status_code != 200:
+                bengali = BENGALI_ERROR_MESSAGE
+                try:
+                    body = await resp.aread()
+                    bengali = json.loads(body).get("bengaliMessage") or bengali
+                except Exception:
+                    pass
+                print(f"Node service error: HTTP {resp.status_code}", file=sys.stderr)
+                await ws.send_text(json.dumps({"type": "text", "text": bengali, "llm_time": 0}))
+                return
+
+            # Relay each NDJSON event as it arrives. Race every line-read against
+            # the interrupt event so a barge-in stops us promptly; leaving the
+            # `async with` then closes the connection, which Node uses to cancel
+            # the rest of the TTS work.
+            line_iter = resp.aiter_lines()
+            interrupt_task = asyncio.ensure_future(interrupted.wait())
             try:
-                bengali = e.response.json().get("bengaliMessage") or bengali
-            except Exception:
-                pass
-        print(f"Node service error: {e}", file=sys.stderr)
-        await ws.send_text(json.dumps({"type": "text", "text": bengali, "llm_time": 0}))
-        return
+                while True:
+                    next_task = asyncio.ensure_future(line_iter.__anext__())
+                    done, _ = await asyncio.wait(
+                        {next_task, interrupt_task}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if interrupt_task in done:
+                        next_task.cancel()
+                        print("Interrupted during stream, closing connection")
+                        break
+                    try:
+                        line = next_task.result()
+                    except StopAsyncIteration:
+                        break
+                    if not line:
+                        continue
 
-    if interrupted.is_set():
-        print("Interrupted after Node response, skipping")
-        return
+                    event = json.loads(line)
+                    etype = event.get("type")
 
-    text_response = result.get("responseText", "")
-    transcription = result.get("transcription")
-    timings = result.get("timings", {})
-    llm_time = round(timings.get("llmMs", 0) / 1000, 2)
-    tts_time = round(timings.get("ttsMs", 0) / 1000, 2)
-    print(f"LLM ({llm_time:.2f}s) [node] heard: {transcription!r} → {text_response}")
-
-    reply = {"type": "text", "text": text_response, "llm_time": llm_time}
-    if transcription:
-        reply["transcription"] = transcription
-    await ws.send_text(json.dumps(reply))
-
-    if interrupted.is_set():
-        print("Interrupted before audio relay, skipping audio")
-        return
-
-    chunks = result.get("chunks", [])
-    sample_rate = result.get("sampleRate", 24000)
-
-    await ws.send_text(json.dumps({
-        "type": "audio_start",
-        "sample_rate": sample_rate,
-        "sentence_count": len(chunks),
-    }))
-
-    for chunk in chunks:
-        if interrupted.is_set():
-            print("Interrupted during audio relay")
-            break
-        await ws.send_text(json.dumps({
-            "type": "audio_chunk",
-            "audio": chunk["audioBase64"],
-            "index": chunk["index"],
-        }))
-
-    if not interrupted.is_set():
-        print(f"TTS ({tts_time:.2f}s): {len(chunks)} chunks")
-        await ws.send_text(json.dumps({"type": "audio_end", "tts_time": tts_time}))
+                    if etype == "text":
+                        text_response = event.get("responseText", "")
+                        transcription = event.get("transcription")
+                        llm_time = round(event.get("llmMs", 0) / 1000, 2)
+                        print(f"LLM ({llm_time:.2f}s) [node] heard: {transcription!r} → {text_response}")
+                        reply = {"type": "text", "text": text_response, "llm_time": llm_time}
+                        if transcription:
+                            reply["transcription"] = transcription
+                        await ws.send_text(json.dumps(reply))
+                    elif etype == "audio_start":
+                        await ws.send_text(json.dumps({
+                            "type": "audio_start",
+                            "sample_rate": event.get("sampleRate", 24000),
+                            "sentence_count": event.get("sentenceCount", 0),
+                        }))
+                    elif etype == "audio_chunk":
+                        chunk_count += 1
+                        await ws.send_text(json.dumps({
+                            "type": "audio_chunk",
+                            "audio": event.get("audioBase64"),
+                            "index": event.get("index"),
+                        }))
+                    elif etype == "done":
+                        tts_time = round(event.get("ttsMs", 0) / 1000, 2)
+                        print(f"TTS ({tts_time:.2f}s): {chunk_count} chunks")
+                        await ws.send_text(json.dumps({"type": "audio_end", "tts_time": tts_time}))
+                    elif etype == "error":
+                        # Mid-stream failure (headers already sent, so it arrives
+                        # as an event, not a non-200): speak the apology and stop.
+                        bengali = event.get("bengaliMessage") or BENGALI_ERROR_MESSAGE
+                        print("Node stream error event", file=sys.stderr)
+                        await ws.send_text(json.dumps({"type": "text", "text": bengali, "llm_time": 0}))
+                        break
+            finally:
+                interrupt_task.cancel()
+    except Exception as e:
+        # A barge-in cancels the in-flight read; that's expected, not an error.
+        if not interrupted.is_set():
+            print(f"Node service error: {e}", file=sys.stderr)
+            await ws.send_text(json.dumps({"type": "text", "text": BENGALI_ERROR_MESSAGE, "llm_time": 0}))
 
 
 @app.websocket("/ws")
