@@ -1,18 +1,12 @@
-# Bengali Localization — Implementation Plan
+# Bengali Localization — Architecture
 
-**Purpose:** A complete, evidence-driven implementation plan for adapting Parlor — a real-time voice + vision assistant currently English-only — to fully support Bengali. Covers architecture, folder structure, design decisions, risks, a priority-ordered build sequence, implementation guidelines, and optional differentiators.
+**Purpose:** Documents the architecture behind adapting Parlor — a real-time voice + vision assistant — to fully support Bengali. Covers the system design, folder structure, and the design decisions and trade-offs behind it.
 
-**Context this plan is written against:** Parlor is currently English-only. Its backend (Python/FastAPI) is intentionally left as-is except for two integration points — the goal is to demonstrate strong JavaScript/Node engineering in new glue/service code, plus clean navigation of an unfamiliar codebase, while producing natural, professional (not literal/robotic) Bengali throughout the product. The result must run end-to-end; it does not need to be a flawless, mergeable feature.
-
-**Grounding note:** This plan is based on direct research of the actual repository (`github.com/fikrikarim/parlor`) — its exact WebSocket protocol, system prompt, TTS internals, and every frontend string were read and confirmed before any design decision below was made. Where a decision depends on a fact about the codebase, that fact is cited.
-
-**[FACT]** = directly from source. **[INFERENCE]** = reasoning beyond the text.
+**[FACT]** = directly from source.
 
 ---
 
-# Part A — Planning Before Coding
-
-## Confirmed facts about the codebase driving this design
+## Facts about the original codebase
 
 - **[FACT]** Parlor is a real-time voice + vision assistant: FastAPI + WebSocket backend (`src/server.py`), on-device **Gemma 4 E2B** (via `litert_lm.Engine`) for speech/vision understanding, **Kokoro** (82M) for TTS (`src/tts.py`), and a single monolithic `src/index.html` frontend (inline CSS+JS, no separate files, no i18n framework).
 - **[FACT]** WS protocol (verified against the WebSocket handler in `src/server.py` — the `receiver()` loop that parses incoming messages, and the `text`/`audio_start`/`audio_chunk`/`audio_end` emissions that follow LLM + TTS). Client → server, any combination of these keys in one JSON object:
@@ -31,187 +25,116 @@
   {"type": "audio_end", "tts_time": 0.87}
   ```
   `transcription` is appended to the `text` message only when the forced `respond_to_user` tool call produced one — it is not always present.
-- **[FACT]** System prompt (verbatim): *"You are a friendly, conversational AI assistant. The user is talking to you through a microphone and showing you their camera. You MUST always use the respond_to_user tool to reply. First transcribe exactly what the user said, then write your response."* A forced tool call `respond_to_user(transcription, response)` drives every reply; four hardcoded English instruction strings are appended per turn depending on which of audio/image/text is present.
-- **[FACT — hard constraint]** Kokoro has **no language parameter and no Bengali voice**, on either the MLX (Mac) or ONNX (Linux) backend — the G2P pipeline (misaki/espeak-style) is English-oriented regardless of backend. **There is no configuration that makes the current TTS speak Bengali.** Gemma 4 E2B's Bengali fluency is also unverified.
-- **[FACT]** Every frontend user-facing string is a literal with zero i18n abstraction: title `Parlor`, model label `Gemma 4 E2B`, status pill `Disconnected/Connected/Processing`, state labels `Loading.../Listening/Thinking.../Speaking`, `On-device` pill, button `Camera On/Camera Off`, meta template literals (`` `LLM ${t}s` ``), `<html lang="en">`, Latin-only Google Fonts with no Bengali fallback.
-- **[INFERENCE]** These two facts together (no on-device Bengali TTS, unverified LLM Bengali fluency) are almost certainly *why* swapping to hosted APIs is a sensible move here — it is closer to a requirement than an option.
+- **[FACT]** System prompt (verbatim, on-device mode): *"You are a friendly, conversational AI assistant. The user is talking to you through a microphone and showing you their camera. You MUST always use the respond_to_user tool to reply. First transcribe exactly what the user said, then write your response."* A forced tool call `respond_to_user(transcription, response)` drives every reply; four hardcoded English instruction strings are appended per turn depending on which of audio/image/text is present.
+- **[FACT — hard constraint]** Kokoro has **no language parameter and no Bengali voice**, on either the MLX (Mac) or ONNX (Linux) backend — the G2P pipeline (misaki/espeak-style) is English-oriented regardless of backend. Gemma 4 E2B's Bengali fluency was also unverified.
+- **[FACT]** Every frontend user-facing string was a literal with zero i18n abstraction: title `Parlor`, model label `Gemma 4 E2B`, status pill `Disconnected/Connected/Processing`, state labels `Loading.../Listening/Thinking.../Speaking`, `On-device` pill, button `Camera On/Camera Off`, meta template literals (`` `LLM ${t}s` ``), `<html lang="en">`, Latin-only Google Fonts with no Bengali fallback.
+- **[FACT]** These two constraints — no on-device Bengali TTS, unverified LLM Bengali fluency — are why hosted LLM and TTS APIs replace the on-device pipeline in Bengali/hosted mode.
 
-## High-Level Architecture
+## Architecture
 
-**Node is a backend sidecar service that `server.py` calls into for the two "brain" operations (LLM + TTS). The browser never talks to Node directly, and the existing WebSocket contract to the browser is preserved byte-for-byte.**
+Node is a backend sidecar service that `server.py` calls into for the two "brain" operations (LLM + TTS). The browser never talks to Node directly, and the WebSocket contract to the browser is preserved byte-for-byte.
 
 ```
 Browser (index.html, unmodified WS contract)
    │  WS /ws  { text | audio(b64 wav) | image(b64 jpeg) | interrupt }
    ▼
-Python: src/server.py  (kept almost as-is: WS accept, message parsing,
-                         audio_start/audio_chunk/audio_end emission, interrupt handling)
-   │  HTTP POST /converse   { text?, audioBase64?, imageBase64?, sessionId }
+Python: src/server.py  (WS accept, message parsing, audio_start/audio_chunk/audio_end
+                         emission relayed from Node's stream, interrupt handling)
+   │  HTTP POST /converse   { sessionId, text?, audioBase64?, imageBase64? }
    ▼
-Node: service/  (new, substantial, central — this is where the new code lives)
-   ├─ prompts/bengali.js     → Bengali system prompt + per-modality instruction strings + tool schema
-   ├─ llm/*                  → hosted LLM call (function-calling emulation of respond_to_user)
+Node: service/  (LLM + TTS orchestration)
+   ├─ prompts/bengali.js     → Bengali system prompt + per-modality instructions + response schema
+   ├─ llm/*                  → hosted LLM call (Gemini · OpenRouter · mock), JSON-schema-constrained output
    ├─ text/sentenceSplit.js  → Bengali-aware sentence chunking (danda '।' + . ! ?)
    ├─ tts/*                  → hosted TTS per sentence, concurrent, → PCM16
-   └─ routes/converse.js     → orchestrates the above, returns one JSON payload
-   │  200 JSON { transcription, responseText, sampleRate, chunks:[{index,audioBase64}], timings }
+   ├─ log/*                  → durable persistence of flagged safety events
+   ├─ util/{audio,cache,retry}.js → MP3→PCM16 transcode, TTS caching, bounded retry/backoff
+   └─ routes/converse.js     → orchestrates the above, streams one NDJSON event per line
+   │  200 application/x-ndjson: {type:text} → {type:audio_start} → {type:audio_chunk}×N → {type:done}  (or {type:error})
    ▼
-Python relays the JSON into the *existing* message shapes → WS → Browser plays audio exactly as before
+Python relays each event into the existing WS message shapes as it arrives → browser plays audio progressively, exactly as before
 ```
 
 **Why this split, not the alternatives:**
-- *Node fully replaces `/ws`* — rejected: forces reimplementing WAV/JPEG decoding and interrupt bookkeeping that already works in `server.py`. Reading and adapting unfamiliar code is part of what's being demonstrated here, and rewriting a working WS layer from scratch spreads new code across low-value plumbing instead of the LLM/voice logic that actually matters.
-- *Node as a thin wrapper Python barely touches* — rejected: under-delivers on the primary goal of showing strong, substantial JavaScript/Node engineering.
-- **This design**: Python's edit surface shrinks to exactly two call-site redirects in `server.py` (the `litert_lm.Engine` call, the per-sentence TTS call), one new env var (`NODE_SERVICE_URL`), and an interrupt→task-cancellation tweak. Every semantically new piece of logic — Bengali prompting, hosted-LLM function-calling, sentence chunking, hosted TTS, audio format conversion, logging, rate limiting, prompt-injection guard — lives in Node. This maximizes both the amount and quality of new Node code *and* keeps the Python touch minimal and clean.
+- *Node fully replaces `/ws`* — rejected: would force reimplementing WAV/JPEG decoding and interrupt bookkeeping that already worked in `server.py`, spreading new code across low-value plumbing instead of the LLM/voice logic that actually matters.
+- *Node as a thin wrapper Python barely touches* — rejected: under-delivers on demonstrating substantial JavaScript/Node engineering.
+- **This design**: Python's edit surface is exactly two call-site redirects in `server.py` (the `litert_lm.Engine` call, the per-sentence TTS call), one new env var (`NODE_SERVICE_URL`), a new static-asset route (`/strings.js`), and an interrupt→stream-cancellation tweak. Every semantically new piece of logic — Bengali prompting, hosted-LLM structured output, sentence chunking, hosted TTS, audio format conversion, logging, caching, rate limiting, safety — lives in Node.
 
-**Turn walkthrough:** mic speech ends (browser's `vad.MicVAD`) → base64 WAV over `/ws` (unchanged) → `server.py` decodes, POSTs to `/converse` with a `sessionId` → Node builds the Bengali multimodal prompt (maintaining per-session conversation history in-memory, mirroring the original `engine.create_conversation` statefulness) → calls the hosted LLM with a forced function call `respond_to_user(transcription, response)` → splits `response` into Bengali-punctuation-aware sentences → runs per-sentence TTS concurrently (`Promise.allSettled`) → converts each to PCM16, resampled to match `audio_start.sample_rate` → base64-encodes → returns one JSON payload → `server.py` re-emits `text`, then `audio_start`, then N `audio_chunk`s, then `audio_end` — identical shapes to today, so the frontend's existing playback code needs no protocol changes.
+**Turn walkthrough:** mic speech ends (browser's `vad.MicVAD`) → base64 WAV over `/ws` (unchanged) → `server.py` decodes, POSTs to `/converse` with a `sessionId` → Node builds the Bengali multimodal prompt (per-session conversation history kept in-memory, mirroring the original `engine.create_conversation` statefulness) → calls the hosted LLM for a JSON-schema-constrained `{transcription, response}` object → splits `response` into Bengali-punctuation-aware sentences → runs per-sentence TTS concurrently, drained in sentence order → transcodes each to PCM16 at the `audio_start` sample rate → streams the turn back to `server.py` as NDJSON, one event per line, as each piece becomes ready → `server.py` relays each event into the existing `text`/`audio_start`/`audio_chunk`/`audio_end` WS frames as it arrives — so audio starts reaching the browser before the whole reply has finished synthesizing, and the frontend's existing playback code needs no protocol changes.
 
-**Interrupt/barge-in:** `server.py` keeps handling `{"type":"interrupt"}` locally exactly as today, now cancelling its outstanding async HTTP call to Node (asyncio task cancellation) instead of a local `litert_lm` call. Node needs no matching `/interrupt` endpoint — a stray in-flight call whose result gets discarded is an accepted, deliberately scoped-down cost (see Risks).
+**Interrupt/barge-in:** `server.py` keeps handling `{"type":"interrupt"}` locally exactly as before. In hosted mode it now closes the in-flight NDJSON stream to Node on interrupt; Node detects this via `res.on('close')` and stops synthesizing the rest of the turn — real cross-process cancellation, not just a discarded result.
 
 ## Folder Structure
 
 ```
 <fork-root>/
-├── src/                          # existing Python — minimal, targeted edits only
-│   ├── server.py                 # 2 call sites redirected to Node; + NODE_SERVICE_URL config
-│   ├── tts.py                    # left in place, out of the hot path (kept, not deleted — smaller diff)
-│   ├── index.html                # + lang="bn", Bengali font link, + <script src="strings.bn.js">, literals → STRINGS.* lookups
-│   └── strings.bn.js             # NEW — one small flat object, lives beside index.html (a static browser asset Python already serves as-is)
+├── src/                          # existing Python — minimal, targeted edits
+│   ├── server.py                 # two call sites redirected to Node; NODE_SERVICE_URL config; /strings.js route
+│   ├── tts.py                    # kept in place, used only in on-device mode
+│   ├── index.html                # lang set per mode, Bengali font, STRINGS.* lookups
+│   ├── strings.en.js             # on-device/English UI strings
+│   └── strings.bn.js             # hosted/Bengali UI strings — served by the /strings.js route
 │
-└── service/                      # NEW Node project, sibling to src/, wholly separate deploy unit
+└── service/                      # Node project, sibling to src/, separate deploy unit
     ├── package.json
-    ├── .env.example               # LLM_PROVIDER, TTS_PROVIDER, API keys (incl. OPENROUTER_API_KEY, OPENROUTER_MODEL), PORT
+    ├── .env.example               # LLM_PROVIDER, TTS_PROVIDER, API keys, PORT, SAFETY_MODE, ...
     ├── src/
-    │   ├── index.js               # Express/Fastify bootstrap + /health
+    │   ├── index.js               # Express bootstrap, /health, central error handler
     │   ├── config.js              # env-driven provider selection, fail-fast on missing keys
-    │   ├── routes/converse.js     # POST /converse orchestration (kept thin — orchestration only)
+    │   ├── errors.js              # ProviderError + Bengali fallback message
+    │   ├── routes/converse.js     # POST /converse orchestration (thin) — streams NDJSON
     │   ├── llm/
     │   │   ├── index.js           # provider-agnostic interface (strategy pattern)
-    │   │   ├── geminiProvider.js  # default — verified native audio+image input, verified function-calling
-    │   │   └── openRouterProvider.js  # alternate — swap to any OpenRouter-hosted model via OPENROUTER_MODEL for a cost/quality dial; verify per-model audio-input + tool-calling support before relying on it (see Design Decisions, row a)
+    │   │   ├── geminiProvider.js  # default — native audio+image input, JSON-schema output
+    │   │   ├── openRouterProvider.js  # alternate — swap model via OPENROUTER_MODEL
+    │   │   └── mockProvider.js    # canned Bengali replies — runs the whole app with zero API keys
     │   ├── tts/
     │   │   ├── index.js
     │   │   └── edgeTtsProvider.js
-    │   ├── prompts/bengali.js     # single source of truth: system prompt + 4 modality strings + tool schema
-    │   ├── text/sentenceSplit.js
-    │   ├── middleware/{rateLimit.js, promptInjectionGuard.js}   # log-only, per locked scope
-    │   ├── logging/logger.js      # per-request: provider, tokens, latency
-    │   └── util/audio.js          # PCM16 conversion/resampling
-    ├── test/                      # light: sentenceSplit, prompt shape — not a full suite
-    └── README.md                  # provider-swap instructions, codebase-comprehension notes, trade-offs, future improvements
+    │   ├── prompts/bengali.js     # system prompt + modality strings + response schema
+    │   ├── text/
+    │   │   ├── sentenceSplit.js   # Bengali-aware sentence chunking
+    │   │   ├── cleanText.js
+    │   │   └── parseJsonObject.js # tolerates a stray ```json fence from providers
+    │   ├── session/history.js     # per-session in-memory text history
+    │   ├── middleware/{rateLimit.js, promptInjectionGuard.js}   # enforced rate limit; detect-only injection guard
+    │   ├── log/                   # durable event persistence (strategy) — none · file (JSONL, rotation)
+    │   ├── logging/logger.js      # ephemeral structured logs → stdout/stderr
+    │   └── util/{audio.js, cache.js, retry.js}   # PCM16 transcode/resample, TTS cache, bounded retry
+    ├── tools/bengaliReview.js     # standalone Bengali QA pass (adversarial native-reviewer persona)
+    ├── test/                      # sentenceSplit, prompts, audio, cache, rateLimit, promptInjectionGuard, ...
+    └── README.md                  # setup, provider-swap instructions, design decisions, trade-offs
 ```
 
-**Why this structure:** `llm/index.js` and `tts/index.js` as strategy interfaces demonstrate deliberate Node architecture rather than a script. `prompts/bengali.js`, isolated from routing, cleanly separates prompt-template management from request handling. `routes/converse.js` kept thin (orchestration only, no business logic inline) shows separation of concerns. `strings.bn.js` staying inside `src/` rather than `service/` signals correct identification of it as a Python-served static asset, not new service code — an easy-to-follow signal for anyone navigating the diff.
+**Why this structure:** `llm/index.js` and `tts/index.js` are strategy interfaces — a new provider is a new file plus one `case` in the factory, never a call-site change. `prompts/bengali.js`, isolated from routing, keeps prompt-template management separate from request handling. `routes/converse.js` stays orchestration-only, no inline business logic. `log/` (durable JSONL persistence of flagged safety events) is kept separate from `logging/logger.js` (ephemeral structured stdout logs) since the two serve different purposes — one is measurement data that must survive a restart, the other is operational visibility. `strings.bn.js`/`strings.en.js` stay inside `src/` rather than `service/` because they are Python-served static assets, not Node service code.
 
 ## Design Decisions
 
 | # | Decision | Alternatives considered | Tradeoffs | Why this is the right call |
 |---|---|---|---|---|
-| a | **LLM: Google Gemini (`gemini-2.0-flash`-class) via an AI Studio free-tier API key, as the default provider** — plus **OpenRouter as a second, swappable provider** (`llm/openRouterProvider.js`) for dialing up to a stronger paid model without touching code | OpenAI GPT-4o-mini; Groq (Llama-family) | OpenAI has no perpetual free tier (billing required to start). Groq's free tier is genuinely free and fast but has weaker documented Bengali fluency and less mature audio+image multimodal input than Gemini. OpenRouter adds a second network hop, and audio-input support plus reliable forced function-calling vary by the specific model it's routed to — must be verified for whichever `OPENROUTER_MODEL` is chosen before relying on it for the full audio+tool-call flow; a model lacking one of these may need a text-only fallback. | Gemini-direct: native multimodal input (matches the original audio/image `respond_to_user` shape), documented Bengali support, a free tier reachable without a paid card, and function-calling to emulate the forced tool call — a justified default with real cost/rate-limit awareness behind it. OpenRouter costs nothing architecturally (same `llm/` interface, one more provider file) and turns "is free-tier quality good enough" into a one-line env swap (`LLM_PROVIDER=openrouter`, `OPENROUTER_MODEL=...`) instead of a rewrite — concretely demonstrating awareness of output quality, which pairs directly with the Bengali-QA review pass (Part C): if that pass flags weak phrasing, the fix is a config change, not new code. |
-| b | **TTS: Microsoft Edge neural voices (`bn-IN`/`bn-BD`) via a free, unofficial Node client**, with Google Cloud TTS Neural2 (`bn-IN`) documented as the drop-in official alternative | Google Cloud TTS; Azure Speech; ElevenLabs | Edge TTS is free/no-signup but unofficial (endpoint could change) and returns compressed audio requiring an explicit transcode-to-PCM16 step; Google TTS is official and emits raw `LINEAR16` natively but needs a billing-enabled GCP account; ElevenLabs' free tier and Bengali coverage are both limited. | Prioritizes "runnable without a paid key," and the transcode step becomes legitimate, visible Node engineering (buffer/stream handling) rather than a liability — the provider is swappable via env var if the unofficial endpoint proves unreliable. |
-| c | **Preserve the existing WS message contract exactly** — Node never speaks WS to the browser | A new Node↔browser WS protocol; Node replacing `/ws` entirely | A new protocol would force a frontend WS-handling rewrite, expanding the audited diff and risking regressions in the already-working VAD/interrupt flow. | Keeps frontend changes confined to strings/lang, not protocol rework — clean, minimal Python/frontend touch. |
-| d | **Bengali frontend strings centralized in one flat `src/strings.bn.js` object**, not a full i18n framework, not scattered inline replacement | Full i18n library (i18next); hand-translating each string in place | Inline replacement is fast but leaves strings scattered and undiscoverable, undercutting the "figuring out where user-facing language lives" work; a full i18n framework is disproportionate for a Bengali-only, no-toggle scope. | Matches the locked Bengali-only scope while still proving every string (title, status pill, state labels, camera button, `LLM ${t}s` meta template) was located and centralized — pragmatic scoping over gold-plating. |
-| e | **Provider swap via env vars** (`LLM_PROVIDER=gemini`, `TTS_PROVIDER=edge`), read once in `config.js`, injected into a factory in `llm/index.js`/`tts/index.js`; for the OpenRouter provider specifically, a further `OPENROUTER_MODEL` env var swaps the underlying model itself | A runtime admin API to switch providers; hardcoding a single provider | An admin API is over-engineered for this scope; hardcoding forecloses any cost/rate-limit-awareness signal. | Keeps the strategy pattern trivial to extend, and cheaply demonstrates cost/rate-limit judgment without building a real ops layer — the `OPENROUTER_MODEL` layer additionally demonstrates a cost-vs-quality dial, not just a cost-vs-uptime one. |
+| a | **LLM: Google Gemini (`gemini-2.5-flash`) via an AI Studio free-tier API key, as the default provider** — plus **OpenRouter as a second, swappable provider** for dialing to a different model without touching code | OpenAI GPT-4o-mini; Groq (Llama-family) | OpenAI has no perpetual free tier. Groq's free tier is genuinely free and fast but has weaker documented Bengali fluency and less mature audio+image multimodal input. | Native multimodal input, documented Bengali support, a free tier reachable without a paid card, and reliable structured output. |
+| b | **TTS: Microsoft Edge neural voices (`bn-BD`/`bn-IN`) via a free, unofficial Node client (`msedge-tts` v2+)** | Google Cloud TTS; Azure Speech; ElevenLabs | Free/no-signup but unofficial (endpoint could change) and returns compressed audio, requiring an explicit transcode-to-PCM16 step. | All three alternatives are genuinely good Bengali TTS, but none are free: Google Cloud TTS and Azure Speech both require a billing-enabled account even to reach their free quota, and ElevenLabs' free tier caps out fast and has thinner Bengali voice coverage. Edge is the one option that needs no signup, no card, and no quota to run at all — for a project meant to run end-to-end with zero cost to try, that made it the only viable default; swappable to Google Cloud TTS Neural2 via the same `tts/` strategy interface if a paid tier is ever acceptable. |
+| c | **Preserve the existing WS message contract to the browser exactly** — Node never speaks WS to the browser | A new Node↔browser WS protocol; Node replacing `/ws` entirely | A new protocol would have forced a frontend WS-handling rewrite. | Frontend changes stay confined to strings/lang — no protocol rework. |
+| d | **Bengali frontend strings centralized in `strings.bn.js`/`strings.en.js`**, field-for-field identical in shape, served by a new `/strings.js` route | Full i18n library (i18next); hand-translating each string in place | A full i18n framework is disproportionate for a Bengali-only, no-toggle scope. | Every string (title, status pill, state labels, camera button, `LLM ${t}s` meta template) lives in one place per language; `server.py`'s only new static-asset route picks the right file from `HOSTED_MODE`. |
+| e | **Provider swap via env vars** (`LLM_PROVIDER`, `TTS_PROVIDER`), read once in `config.js`; `OPENROUTER_MODEL` swaps the underlying model when `LLM_PROVIDER=openrouter` | A runtime admin API to switch providers; hardcoding a single provider | An admin API would be over-engineered for this scope. | Keeps the strategy pattern trivial to extend; only Google/Gemini models on OpenRouter are confirmed to accept audio input and honor strict JSON-schema output reliably, so `OPENROUTER_MODEL` defaults to `google/gemini-2.5-flash`. |
+| f | **Native JSON-schema-constrained output** (`responseSchema` on Gemini, `response_format: {type:'json_schema', strict:true}` on OpenRouter) drives the `{transcription, response}` shape, not forced tool-calling | Emulating the original `respond_to_user` forced tool call | Not all OpenRouter-routed models honor `strict` schema output. | Nothing downstream ever used *tool* semantics — `routes/converse.js` only reads `{transcription, responseText}` regardless of how it's produced — so the more direct mechanism removes a layer of indirection. The system prompt also states the JSON rule directly and repeats it per turn (`JSON_FORMAT_REMINDER`) as a fail-safe; `text/parseJsonObject.js` tolerates a stray ` ```json ` fence if parsing needs it. |
+| g | **`/converse` streams NDJSON** (one JSON event per line: `text` → `audio_start` → `audio_chunk`×N → `done`/`error`) instead of a single buffered JSON response | A single buffered `200 JSON` response with all chunks inline | More moving parts; the error path splits into a pre-stream (normal non-200 JSON) and mid-stream (`{type:error}` event) case. | First audio reaches the browser sooner (~0.3–0.6s earlier on a typical multi-sentence reply — the "wait for the slowest sentence" barrier is removed), and gives real cross-process cancellation on barge-in via `res.on('close')`, instead of a stray in-flight call whose result is simply discarded. |
+| h | **Rate limiting is enforced** (30 requests/60s per `sessionId`, else client IP; `429` + `Retry-After` past the threshold) | Log-only observability | A misconfigured threshold could theoretically reject a legitimate burst. | Real cost/rate-limit control on paid LLM/TTS providers — the threshold has enough headroom that normal usage never approaches it, but a runaway or abusive client is rejected instead of silently costing money. |
+| i | **Two-tier safety, gated by one `SAFETY_MODE` knob (default `log`)**: a primary always-on prompt-level rule in `prompts/bengali.js`, plus two secondary signals — input-side heuristic (`middleware/promptInjectionGuard.js`) and output-side Gemini native `safetySettings` | A full moderation stack (profanity filter, content classifier); no secondary layer at all | Both secondary signals are heuristics/classifiers weaker on Bengali than the prompt rule. | `log` mode lets false-positive rates be measured from the durably-persisted flagged-event log (`log/`) before either signal is trusted to block a genuine turn; `block` mode is already wired for both, so enforcing is a config flip, not new code. |
 
-## Risks
+## Trade-offs
 
-| Risk | Mitigation |
+| Trade-off | Current handling |
 |---|---|
-| Free-tier LLM/TTS rate limits or downtime during a demo | Provider abstraction (decision e) makes a fallback provider a one-line env swap, not a rewrite; bounded retry with backoff in `llm/index.js`/`tts/index.js`; on hard failure, `server.py` emits a friendly Bengali error message over the existing `text` message type instead of hanging the WS. |
-| Frontend expects raw **PCM16** audio chunks decoded directly (`msg.audio`), but Edge TTS returns compressed audio | `util/audio.js` performs an explicit transcode-to-PCM16 + resample step before base64-encoding `audio_chunk`s — called out as load-bearing, not incidental; skipping it silently breaks the browser's existing playback code. |
-| Sentence-splitting regex `(?<=[.!?])\s+` doesn't recognize Bengali's `।` (danda) | `text/sentenceSplit.js` extends the pattern to include `।` alongside `. ! ?`; without this, a full Bengali reply arrives as one giant chunk, breaking the perceived-streaming UX the `audio_start`/`audio_chunk` design relies on. |
-| Hosted APIs add network latency vs. the original blocking local calls | The original `litert_lm.Engine` call was already blocking/non-streaming — not a UX regression in kind. Mitigate by synthesizing all sentence-TTS calls concurrently (`Promise.allSettled`) rather than sequentially. |
-| Interrupt/barge-in racing an in-flight async Node call | `server.py` cancels its own await via asyncio task cancellation on interrupt; a stray Node-side call whose result is discarded is accepted as a bounded, explicitly scoped-down cost rather than building real cross-process cancellation. |
-| Bengali quality risk — literal/robotic translation is the failure mode to avoid | `prompts/bengali.js` and `strings.bn.js` are single-source-of-truth files, easy to hand-review or run through a lightweight Bengali-QA review pass before submission (see Part C). If that pass finds the default free-tier model's Bengali weak, `llm/openRouterProvider.js` + `OPENROUTER_MODEL` gives a config-only escape hatch to a stronger paid model. |
-| OpenRouter's per-model support for audio input and forced function-calling isn't uniform across the models it routes to | Verify both capabilities for the specific `OPENROUTER_MODEL` chosen before switching to it; if a chosen model can't take audio directly, fall back to text-only turns for that provider rather than silently dropping the audio modality. |
-| Scope creep re-introducing cut features (profanity filter, camera content moderation, age monitoring, full eval subsystem, heavy AI-tooling suite) | Explicitly listed as non-goals in `service/README.md`'s "Future Improvements" section; `middleware/promptInjectionGuard.js` logs only, never hard-gates, per the locked minimal-validation scope decision. |
-| Overinvesting effort in Python | Python diff is scoped up front to exactly: two call-site redirects in `server.py`, one new env var, and the interrupt-cancellation tweak — no other `server.py`/`tts.py` restructuring is planned. |
-
-## Priority Plan
-
-1. **Trace, don't touch.** Read `server.py` end-to-end; pinpoint the exact `litert_lm.Engine` call site and the TTS-per-sentence call site with file/line references. Zero code written — the cheapest way to de-risk the integration before writing anything.
-2. **Wire the plumbing with stubs.** Scaffold `service/` (bootstrap, `config.js`, `/health`, a stub `/converse` returning fixed Bengali text + one silent PCM16 chunk). Redirect the two `server.py` call sites to hit the stub over HTTP. Prove the full Python↔Node↔WS↔browser chain works before any provider integration — retires the biggest architectural risk first.
-3. **Real LLM leg.** `prompts/bengali.js` + `llm/geminiProvider.js`, function-calling emulation of `respond_to_user`, `text/sentenceSplit.js` with Bengali punctuation. This is the highest-value new code — front-loaded intentionally.
-4. **Real TTS leg.** `tts/edgeTtsProvider.js` + `util/audio.js` PCM16 conversion, concurrent per-sentence synthesis, wired into `/converse`'s response shape.
-5. **Finalize the Python integration.** Confirm the two call-site redirects, add `NODE_SERVICE_URL`, interrupt-cancellation handling, graceful-failure Bengali error path. Keep this diff small and reviewable.
-6. **Frontend localization.** `strings.bn.js`, `<html lang="bn">`, Bengali font, literal-to-`STRINGS.*` swaps in `index.html`. Deliberately sequenced after the backend so the Bengali system prompt and frontend strings can be reviewed together for consistency of tone.
-7. **End-to-end manual verification.** Full mic+camera turn, barge-in/interrupt still functions, audio plays correctly, Bengali reads naturally.
-8. **Polish/differentiators (time-permitting only)** — see Part C.
-
-This order secures the highest-value new code (Node service + Bengali quality) and the cleanest possible integration before any time is spent on logging depth, validation breadth, or documentation polish.
+| Free-tier LLM/TTS rate limits or downtime | Provider is swappable via env var (decision e); bounded retry + backoff + per-attempt timeout around every provider call (`util/retry.js`); on hard failure, a structured 502 carries a ready-to-speak Bengali apology that `server.py` relays over the existing `text` frame instead of hanging the socket. |
+| MP3-only TTS output vs. the browser expecting raw PCM16 | `util/audio.js` transcodes MP3 → PCM16 (pure-WASM, no system ffmpeg) and resamples to the `audio_start` sample rate before every `audio_chunk` — load-bearing, not incidental. |
+| Bengali's sentence terminator (`।`, danda) differs from `. ! ?` | `text/sentenceSplit.js` splits on `।` alongside `. ! ?`; without it a full reply arrives as one chunk and the streaming UX collapses. |
+| Hosted APIs add a network hop vs. the original blocking local calls | Per-sentence TTS runs concurrently and the turn streams back as NDJSON as each piece is ready (see Architecture), rather than waiting for the full reply. The LLM leg itself is still one non-streamed call — the next latency lever, deferred (see `service/README.md`'s Future improvements). |
+| In-memory per-session conversation history | Sufficient at this scale; doesn't survive a restart or scale horizontally. A real deployment would move it to Redis (interface already isolated in `session/history.js`). |
+| Edge TTS is an unofficial, free client | Works today with no signup, but the endpoint isn't a documented public API and could change; swappable to Google Cloud TTS Neural2 (`bn-IN`) via the same `tts/` strategy interface if it becomes unreliable. |
+| OpenRouter's per-model support for audio input and strict JSON-schema output isn't uniform | Only Google/Gemini models on OpenRouter are confirmed to accept `input_audio` and honor `strict` schema output reliably; `OPENROUTER_MODEL` defaults to `google/gemini-2.5-flash` for that reason — swapping to a different model needs the same check first. |
+| Safety/prompt-injection signals are heuristics, weaker on Bengali than the primary prompt-level rule | Both default to `SAFETY_MODE=log` rather than blocking, so false-positive rates on real Bengali traffic can be measured from the durably-persisted flagged-event log before either is ever allowed to block a genuine turn. |
 
 ---
 
-# Part B — Implementation Guidelines
-
-| Area | Guidance |
-|---|---|
-| **Architecture** | Strategy-pattern interfaces for `llm/` and `tts/` (one `index.js` exposing `generate()`/`synthesize()`, one file per provider implementing it) — new providers are additive, never require touching call sites. |
-| **Code organization** | Keep `routes/converse.js` to orchestration only — no prompt text, no provider-specific logic inline. Business logic lives in `llm/`, `tts/`, `prompts/`, `text/`. |
-| **Naming conventions** | Node: camelCase files/functions, PascalCase for provider classes if used (`GeminiProvider`). When touching `server.py`, match its existing snake_case and its existing logging style (`f"LLM ({t}s) [tool] heard: ..."`) rather than imposing Node conventions on Python. |
-| **Error handling** | Every provider call wrapped in try/catch with a typed error (`ProviderError`); `routes/converse.js` catches these and returns a structured error the Python side turns into a Bengali-language `text` message rather than dropping the WS connection. |
-| **Logging** | One structured log line per `/converse` call: `{sessionId, llmProvider, ttsProvider, promptTokens, completionTokens, llmLatencyMs, ttsLatencyMs}`. Console/JSON is sufficient — no log aggregation infra. |
-| **Validation** | Request size cap (reject audio/image blobs above a sane limit) and a lightweight prompt-injection heuristic in `middleware/promptInjectionGuard.js` — both **log, don't block**, per the locked minimal-validation scope. Nothing beyond this (no profanity filter, no content moderation) is implemented. |
-| **Testing** | A handful of targeted unit tests: `text/sentenceSplit.js` (Bengali punctuation cases), `prompts/bengali.js` (shape/required-fields check). No integration/e2e suite, no CI — production-grade test infra is out of scope here. |
-| **Documentation** | `service/README.md`: setup, env vars, provider-swap instructions, and a short "how I found the user-facing strings / system prompt" comprehension note. Root-level write-up covers AI-usage, trade-offs, future improvements. |
-| **Performance** | Concurrent per-sentence TTS synthesis (`Promise.allSettled`) rather than sequential; avoid blocking the Node event loop with synchronous work in `util/audio.js`. |
-| **Security** | No hardcoded API keys — `.env` + `.env.example` + `.gitignore` entry; `config.js` fails fast at startup if a required key is missing rather than failing on first request. |
-| **Maintainability** | `prompts/bengali.js` as the single source of truth for every string sent to the LLM; changing tone/wording touches one file, not scattered call sites. |
-| **Developer experience** | `npm run dev` / `npm start` scripts, a `/health` endpoint, a clear `.env.example` with inline comments — a new contributor should be running the service in under two minutes. |
-| **Scalability** | In-memory per-session conversation history map is sufficient at this scale; note in the README that a real deployment would move this to Redis/a session store — don't build that now. |
-| **Future extensibility** | Adding a new LLM/TTS provider = implement the interface + register in the factory + set an env var. Adding a second language = extend `prompts/` and `strings.*.js`, no architecture change. Document both explicitly in the README's "Future Improvements" section. |
-
----
-
-# Part C — Differentiators
-
-| Enhancement | Effort | Impact | Worth doing? |
-|---|---|---|---|
-| **README with AI-usage/decisions write-up** (workflow, prompts used, trade-offs, future improvements) | Low | High — the only way a reader sees the reasoning and AI-tool workflow behind the work, since there's no PR/review step | **Yes** — do this first among differentiators |
-| **Structured per-request logging** (tokens, latency, provider) | Low | Medium-high — visible cost-consciousness signal | **Yes** |
-| **Env-driven config with fail-fast validation** | Low | Medium — professionalism/DX signal | **Yes** |
-| **Graceful error handling + bounded retry/backoff on provider calls** | Medium | Medium-high — protects against free-tier flakiness during a live demo | **Yes** |
-| **1-2 lightweight internal review tools** (e.g. a Bengali-translation-quality reviewer, run once before submission; optionally a quick security/code-quality pass) | Medium | High for showing internal-tooling instincts, without the cost of a full suite | **Yes, capped at 1-2** — do not expand into a large tooling suite |
-| **`/health` endpoint** | Trivial | Low-medium — basic ops hygiene | **Yes**, cheap |
-| **Targeted unit tests** (sentence-splitting, prompt shape) | Low | Low-medium | **Yes**, kept small |
-| **Docker / CI/CD pipeline** | High | Low, given this isn't meant to be a flawless, mergeable feature | **No** — skip |
-| **Full observability/metrics dashboard** | High | Low | **No** — skip |
-| **Bilingual EN/BN toggle** | Medium | Low-medium, not required by the task | **Optional**, only if all Critical/Important items are done with time to spare |
-| **Full input-validation/moderation stack** (profanity, camera content moderation, age monitoring, output classifier) | High | Low relative to cost — no clear basis in the task, actively competes with higher-value work | **No** — explicitly deferred to "Future Improvements" in the write-up, not implemented |
-| **Autonomous bug-fix/feature-add agent loop** | High | Negative — unsupervised edits cut against clean, reviewable navigation and are invisible to a reader anyway | **No** — explicitly rejected |
-
----
-
-# Part D — Final Execution Checklist
-
-## Critical
-
-| # | What | Why it matters |
-|---|---|---|
-| 1 | Build the Node `service/` layer with LLM + TTS provider abstraction | This is the single highest-value new code surface, and the primary thing being demonstrated |
-| 2 | Redirect exactly the two call sites in `server.py`, minimal diff | Demonstrates clean navigation of unfamiliar code without over-touching it |
-| 3 | Translate every frontend string + the system prompt to natural, professional Bengali | Natural, native-sounding phrasing is the named quality bar — literal/robotic translation is a failure mode |
-| 4 | Get a full end-to-end run working (mic/camera in → Bengali text + voice reply out) | Base requirement for the result to be usable at all — working end-to-end, not necessarily flawless |
-
-## Important
-
-| # | What | Why it matters |
-|---|---|---|
-| 5 | Env-driven provider swap (`LLM_PROVIDER`/`TTS_PROVIDER`) | Cheap, visible cost/rate-limit judgment |
-| 6 | Per-request logging (tokens, latency, provider) | Same as above, made concrete |
-| 7 | README covering AI-usage, trade-offs, future improvements | The only channel to make the reasoning and AI workflow behind the work visible — no PR/review step exists |
-| 8 | Minimal input validation (size/rate limit + logged prompt-injection guard) | Shows safety awareness without overbuilding |
-| 9 | Graceful error handling / fallback Bengali error message on provider failure | Protects the "genuinely working" bar against free-tier flakiness during a demo |
-
-## Optional
-
-| # | What | Why it matters |
-|---|---|---|
-| 10 | 1-2 lightweight internal review tools (Bengali-QA reviewer, etc.), documented | Demonstrates internal-tooling instincts cheaply, without diverting time from Critical/Important items |
-| 11 | Targeted unit tests (sentence-splitting, prompt shape) | Small, credible testing signal |
-| 12 | `/health` endpoint | Trivial ops hygiene |
-| 13 | Bilingual EN/BN toggle | Only if all of the above are done with time to spare — not required |
-
----
-
-*This plan is ready to code from. Implementation should follow the Priority Plan in Part A, sequenced so the Critical items are secured before any Optional-tier item is touched.*
+*For implementation rationale, trade-offs made during development, and the AI-assisted workflow behind this build, see `service/README.md` and `AI-USAGE.md`.*
