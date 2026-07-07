@@ -84,7 +84,10 @@ app.use((err, req, res, next) => {
 });
 
 const server = app.listen(config.port, () => {
+  const url = `http://localhost:${config.port}`;
+
   logger.info('parlor-service listening', {
+    url,
     port: config.port,
     llmProvider: llmProviderName(),
     ttsProvider: ttsProviderName(),
@@ -92,6 +95,18 @@ const server = app.listen(config.port, () => {
     ttsVoice: config.tts.voice,
     cacheTts: config.cache.tts,
   });
+
+  // Human-facing banner, separate from the structured JSON log line above —
+  // that one stays machine-parseable, this one is just for eyes at the terminal.
+  console.log(
+    [
+      '',
+      '  🎙️  \x1b[1mparlor-service\x1b[0m is up and listening',
+      `  🔗  \x1b[36m${url}\x1b[0m`,
+      `  🧠  llm: \x1b[33m${llmProviderName()}\x1b[0m   🔊  tts: \x1b[33m${ttsProviderName()}\x1b[0m (${config.tts.voice})`,
+      '',
+    ].join('\n')
+  );
 });
 
 // Graceful shutdown so an interrupted demo doesn't leave a dangling port.
