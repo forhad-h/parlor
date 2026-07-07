@@ -14,6 +14,7 @@ import { promptInjectionGuard } from './middleware/promptInjectionGuard.js';
 import { converseRouter } from './routes/converse.js';
 import { llmProviderName } from './llm/index.js';
 import { ttsProviderName, ttsCacheStats } from './tts/index.js';
+import { ensureDurableLogReady, durableLogProviderName } from './log/index.js';
 import { ProviderError, BENGALI_ERROR_MESSAGE } from './errors.js';
 
 // Fail fast: refuse to start with a misconfigured/keyless selected provider.
@@ -26,6 +27,10 @@ try {
   process.exit(1);
 }
 
+// Built eagerly (not lazily like llm/tts) so a bad durable-log destination is
+// visible here, at boot, instead of surfacing silently on the first logged event.
+ensureDurableLogReady();
+
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: config.limits.maxRequestBytes }));
@@ -36,6 +41,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     llmProvider: llmProviderName(),
     ttsProvider: ttsProviderName(),
+    durableLogProvider: durableLogProviderName(),
     uptimeSec: Math.round(process.uptime()),
     cache: { tts: ttsCacheStats() },
   });
@@ -82,6 +88,7 @@ const server = app.listen(config.port, () => {
     port: config.port,
     llmProvider: llmProviderName(),
     ttsProvider: ttsProviderName(),
+    durableLogProvider: durableLogProviderName(),
     ttsVoice: config.tts.voice,
     cacheTts: config.cache.tts,
   });

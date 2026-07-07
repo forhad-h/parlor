@@ -19,6 +19,7 @@ Node service/  ← you are here
    ├─ llm/                 provider-agnostic LLM (Gemini · OpenRouter · mock)
    ├─ text/sentenceSplit   Bengali-aware sentence chunking (danda ।)
    ├─ tts/                 hosted TTS (Edge neural voices) → PCM16
+   ├─ log/                 durable event persistence (today: flagged safety events)
    ├─ util/audio.js        MP3 → PCM16 transcode + resample
    └─ routes/converse.js   orchestration → one JSON payload
    │  200 { transcription, responseText, sampleRate, chunks:[{index,audioBase64}], timings }
@@ -210,6 +211,16 @@ once before shipping; fixes are one-line edits to the source string files.
     weaker/less-calibrated on Bengali than the prompt rule, so we measure real
     false-positive rates from logs before ever letting either one block a
     genuine turn.
+  - The flagged-event log lines above are also durably persisted by
+    `log/index.js` — a strategy interface (mirroring `llm/`/`tts/`) with a
+    `none` (no-op) and `file` (JSONL, size-based rotation) provider. This
+    exists because stdout alone isn't captured anywhere by default, and the
+    log-first strategy above only works if the data
+    survives to actually measure false-positive rates from. Not a
+    crucial-path feature yet, so the provider choice and rotation/retention
+    knobs are constants in `config.js` rather than env vars — see
+    `log/fileProvider.js` for the rotation scheme and its known
+    ephemeral-filesystem limitation.
 
 ## Testing
 
@@ -232,11 +243,12 @@ service/
 │   ├── routes/converse.js     POST /converse orchestration (thin)
 │   ├── llm/                   index (strategy) · gemini · openRouter · mock
 │   ├── tts/                   index (strategy) · edgeTtsProvider
+│   ├── log/                   durable event persistence (strategy) · none · file — not the stdout logger, see logging/ below
 │   ├── prompts/bengali.js     LLM strings — single source of truth
 │   ├── text/sentenceSplit.js  Bengali-aware chunking
 │   ├── session/history.js     per-session text history (in-memory)
 │   ├── middleware/            rateLimit (enforced) · promptInjectionGuard (detects; gated by SAFETY_MODE)
-│   ├── logging/logger.js      structured JSON logs
+│   ├── logging/logger.js      ephemeral structured JSON logs → stdout/stderr (not persisted; see log/ above)
 │   └── util/                  audio (transcode/resample) · cache · retry
 ├── tools/bengaliReview.js     pre-submission Bengali QA pass
 └── test/                      sentenceSplit · prompts · audio · cache
@@ -247,6 +259,10 @@ service/
 - Move session history and caches to Redis for horizontal scale.
 - Add providers behind the existing interfaces (e.g. Groq LLM, Google Cloud /
   ElevenLabs TTS) — additive, no call-site changes.
+- Add a durable-store `log` provider (e.g. object storage) for
+  deployments on ephemeral filesystems, where the `file` provider's data
+  doesn't survive a redeploy or restart — same additive shape as any other
+  provider swap.
 - Streaming `/converse` (Server-Sent Events) so the browser gets sentence audio
   as each finishes, restoring true progressive playback across the network hop.
 - Enforce safety: once the `possible prompt-injection flagged` / `unsafe

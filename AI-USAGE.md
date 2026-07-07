@@ -136,6 +136,32 @@ This step is also where the two plan gaps above got caught — they weren't
 visible from the plan text, only from reading the resulting code and the
 actual upstream files it touched.
 
+Beyond correctness, I'm actively reviewing for **abstraction leaks** in the
+shared strategy-interface files — cases where a service-agnostic factory
+documents its own design in terms of one concrete provider's details, instead
+of describing the provider *category* generically. The durable-log interface
+(`log/index.js`) surfaced two rounds of this. First, it justified its eager-build
+design by naming `dir` — a field only the file-backed provider uses, absent under
+the `none` provider — and re-stated *policy* rationale (why the events are worth
+keeping) that belongs with `config.safety.mode`, not the persistence mechanism. I
+rewrote it to talk about "a provider that validates its destination at
+construction" and to point at the policy rather than restate it, so the interface
+stays purely about the `write(entry)` contract; the concrete `dir`/`mkdirSync`
+specifics now live only in `fileProvider.js`.
+
+That review then exposed a deeper coupling: the whole subsystem was named for
+its *first caller* (`SafetyLogEntry`, `recordSafetyEvent`, `config.safetyLog`)
+even though the mechanism — append-only JSONL with rotation behind a swappable
+storage provider — is domain-independent. Since entries already carried a `type`
+field, I generalized it to a `type`-discriminated **durable log**
+(`recordDurableEvent`, `config.durableLog`): a new kind of log is now a new `type`
+value at the call site, with no change to the interface. Safety is just today's
+only caller. This is the same principle `CLAUDE.md` encodes as a convention (no
+provider- or model-specific detail in shared files), applied at review time
+rather than assumed — and it's a reversal of my own earlier instinct to leave the
+subsystem safety-named, once I separated "safety is the domain identity" from
+"safety is baked into a mechanism that doesn't need it."
+
 ## 8. Verification
 
 I didn't take "it compiles" as good enough. I ran the real Edge TTS path

@@ -65,6 +65,20 @@ export const config = Object.freeze({
     mode: str('SAFETY_MODE', 'log').toLowerCase(),
   }),
 
+  // Durable persistence for events that must survive past the stdout logger
+  // (see log/index.js). Today that's the safety-flag events above, but the sink
+  // is generic — entries are discriminated by `type`, so a new kind of log
+  // reuses it without a config change. Not a crucial-path feature yet, so these
+  // are plain constants rather than env vars; promote individual ones to env
+  // vars if a real deployment ever needs to tune them without a code change.
+  durableLog: Object.freeze({
+    provider: 'file', // 'none' disables persistence entirely (edit here, not via env)
+    dir: 'logs', // single flat file; entries are discriminated by `type`
+    file: 'events.jsonl',
+    maxBytes: 5 * 1024 * 1024,
+    maxFiles: 5,
+  }),
+
   tts: Object.freeze({
     provider: str('TTS_PROVIDER', 'edge').toLowerCase(),
     voice: str('TTS_VOICE', 'bn-BD-NabanitaNeural'),

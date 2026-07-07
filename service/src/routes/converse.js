@@ -19,6 +19,7 @@ import { getHistory, appendTurn } from '../session/history.js';
 import { SAFE_REFUSAL } from '../prompts/bengali.js';
 import { config } from '../config.js';
 import { logger } from '../logging/logger.js';
+import { recordDurableEvent } from '../log/index.js';
 
 export const converseRouter = Router();
 
@@ -49,6 +50,13 @@ converseRouter.post('/converse', async (req, res, next) => {
         hits: injection.hits,
         sample: injection.sample,
         mode: config.safety.mode,
+      });
+      recordDurableEvent({
+        type: 'prompt_injection',
+        sessionId: sessionId ?? null,
+        mode: config.safety.mode,
+        hits: injection.hits,
+        sample: injection.sample,
       });
     }
     const inputBlocked = config.safety.mode === 'block' && injection?.flagged;
@@ -99,6 +107,16 @@ converseRouter.post('/converse', async (req, res, next) => {
         finishReason: safety.finishReason,
         blockReason: safety.blockReason,
         mode: config.safety.mode,
+      });
+      recordDurableEvent({
+        type: 'unsafe_content',
+        sessionId: sessionId ?? null,
+        mode: config.safety.mode,
+        provider: safety.provider,
+        categories: safety.categories,
+        blocked: safety.blocked,
+        finishReason: safety.finishReason,
+        blockReason: safety.blockReason,
       });
       if (config.safety.mode === 'block') {
         responseForTurn = SAFE_REFUSAL; // speak a Bengali refusal instead of the flagged reply
