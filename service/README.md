@@ -123,6 +123,36 @@ LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-2.5-pro npm start
   mechanism. Both providers still fall back to plain-text output (and tolerate a
   stray ```` ```json ```` fence, via `text/parseJsonObject.js`) if parsing fails,
   rather than hanging the turn.
+- **Native audio input to the LLM, not a separate transcribe-then-LLM pipeline.**
+  An alternative architecture would run a dedicated ASR model first (e.g.
+  Whisper) to get a Bengali transcript, then send that text to the LLM —
+  decoupling "hearing" from "understanding." We didn't choose that, for a few
+  reasons specific to this app:
+  - **Extra network hop, extra latency, extra failure mode.** Every voice turn
+    would need two provider round-trips (ASR, then LLM) instead of one, adding
+    a full request's latency and a second point where a flaky free-tier API
+    can fail the turn — directly working against the streaming/latency work
+    described above.
+  - **Loses cross-modal grounding.** The multimodal request already carries
+    audio *and* the current camera frame in the same call, so the model can
+    resolve references like "what is this" against what it's hearing and
+    seeing at once. A standalone ASR step only ever sees audio — it has no way
+    to let the image disambiguate the transcript (e.g. an ambiguous word that
+    the visual context would resolve), and image + transcript would only meet
+    downstream in the second (LLM) call.
+  - **The transcript is a side effect we already need, not a separate goal.**
+    `{transcription, response}` — see the JSON-structured-output bullet above —
+    is produced by the same call that generates the reply, at no extra cost;
+    a standalone ASR step would duplicate work the LLM call does for free.
+  - **Where a separate ASR step *would* win — and doesn't apply here.** A
+    dedicated ASR model can outperform a multimodal LLM's transcription
+    on accuracy for noisy audio or low-resource-language speech recognition
+    specifically, since that's its one job rather than a byproduct of a
+    generation call. If Bengali transcription quality (not reply quality)
+    becomes the bottleneck — e.g. `unsafe content flagged`- or
+    review-driven evidence that the model mishears rather than misresponds —
+    revisit this with a real ASR provider slotted in ahead of the LLM call,
+    behind its own strategy interface the same way `llm/` and `tts/` are.
 - **Bengali-aware sentence splitting.** The original regex only breaks on
   `.?!`; Bengali's sentence terminator is the danda `।`. Without handling it a
   whole Bengali reply arrives as one chunk and the perceived-streaming UX
