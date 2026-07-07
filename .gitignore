@@ -8,6 +8,9 @@ wheels/
 *.egg-info
 
 
+# Local config (may contain keys)
+.env
+
 # Models (too large for git)
 *.onnx
 *.bin

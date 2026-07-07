@@ -1,0 +1,23 @@
+{
+  "name": "parlor-service",
+  "version": "1.0.0",
+  "description": "Bengali voice+vision brain for Parlor — hosted LLM + TTS sidecar that server.py calls into. Keeps the browser WebSocket contract byte-for-byte identical.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "review:bengali": "node tools/bengaliReview.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.9.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "mpg123-decoder": "^1.0.3",
+    "msedge-tts": "^2.0.6"
+  }
+}
