@@ -302,8 +302,26 @@ service/
 - Stream the **LLM** leg too (token → sentence-boundary → TTS), so the first
   sentence's audio can start before the whole reply text is generated — the one
   latency lever the current TTS-only streaming (see Design decisions) leaves on
-  the table. Larger change: it fights the JSON-schema-constrained
-  `{transcription, response}` output the turn currently relies on.
+  the table. Everything downstream is already progressive (server.py relays the
+  NDJSON line-by-line; the browser schedules chunks gaplessly), so the LLM call
+  is the last remaining buffer.
+  - *Benefit:* cuts perceived time-to-first-audio to `first-sentence` +
+    first-sentence TTS instead of `full reply` + first-sentence TTS (~1.5–2.5s
+    on a 6-sentence reply) — the metric that dominates conversational feel.
+    Bonus: the LLM leg becomes cancellable on barge-in (today it always runs to
+    completion and the turn is written to history before an interrupt is known).
+    The win is *bounded* to the first-sentence head start, since sentences 2..N
+    already overlap playback.
+  - *Cost/risk:* it fights the JSON-schema-constrained `{transcription,
+    response}` output the turn relies on — a token stream is a growing JSON
+    document, so each provider must incrementally parse the `response` string
+    out of partial JSON (the main new complexity). The bigger risk is the
+    **safety gate**: output safety currently runs on the *complete* reply before
+    any audio is emitted, so streaming could speak sentence 1 before the safety
+    signal resolves — preserving that guarantee (hold sentence 1 until safety
+    resolves, or a streaming-safe classifier) is a precondition, not an
+    afterthought. Audio-only scope needs no WS-contract change; streaming the
+    reply *text* to the UI would (the `text` frame is single-shot today).
 - Enforce safety: once the `possible prompt-injection flagged` / `unsafe
   content flagged` logs show an acceptable false-positive rate on real Bengali
   traffic, flip `SAFETY_MODE=block` (both block paths are already wired). Also
