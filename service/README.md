@@ -1,5 +1,7 @@
 # Parlor Bengali service (`service/`)
 
+[![Watch the demo](https://drive.google.com/thumbnail?id=1E359T7Wb8iQP06s3cnS5fk3ST5BOySXd&sz=w1000)](https://drive.google.com/file/d/1E359T7Wb8iQP06s3cnS5fk3ST5BOySXd/view)
+
 ## Highlights
 
 - Built a Bengali voice+vision AI assistant sidecar (Node/Express) that layers
@@ -422,6 +424,9 @@ this model is selected.
 
 - Understands multiple input languages, transcribes, and replies in Bengali
   only — confirmed with English and Turkish input in the same session.
+  Individual mixed-in words from other languages (e.g. Arabic terms like
+  *Kitabullah*, *Kuraanul Kareem*) also seemed to be understood, though only
+  at the word level, not tested with longer sentences.
 - Robust to background noise — noise present during capture didn't visibly
   affect reply quality.
 - Held the safety line — did not generate unsafe content under testing.
@@ -532,6 +537,13 @@ service/
 ```
 
 ## Future improvements
+
+**Current state: research/demo-ready, not production-hardened.** The
+strategy-pattern architecture (LLM/TTS/log all swappable behind one
+interface) means most of the gaps below are additive, scoped changes rather
+than a rewrite — but they're real gaps (no auth on `/converse`, in-memory
+state that won't survive a restart or run across multiple instances, safety
+still in `log`-only mode on a regex heuristic), not just unflipped flags.
 
 - Move session history and caches to Redis for horizontal scale.
 - Add providers behind the existing interfaces (e.g. Groq LLM, Google Cloud /
