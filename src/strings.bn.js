@@ -40,7 +40,7 @@ window.STRINGS = {
   status: {
     disconnected: 'বিচ্ছিন্ন',
     connected: 'সংযুক্ত',
-    processing: 'প্রসেসিং',
+    processing: 'প্রসেসিং হচ্ছে',
   },
 
   // Assistant state indicator (bottom-centre).
