@@ -7,15 +7,15 @@ providers, file paths, design tradeoffs — read `README.md` and
 `service/README.md`. This page is about how I think, and how I worked with AI
 to build something I can defend line by line.
 
-## The split: 10% typing, 90% thinking
+## The split: 20% vibe coding, 80% judgment
 
-Roughly one tenth of this project is AI-typed code that I approved. The
-other nine tenths is me — reading the brief, setting scope, planning, and
-reviewing every generated file before I called it done. That is not a modest
-ratio, it is the point. AI is fast at producing text. It is not responsible
-for the result. I am. So I spent my time where responsibility actually
-lives: catching a wrong assumption before it becomes code, not patching a bug
-after it ships.
+Roughly one fifth of this project is vibe-coded — AI-generated code that I
+approved. The other four fifths is me — reading the brief, setting scope, planning,
+creative thinking, deciding, fixing bugs, and reviewing every generated file
+before I called it done. That is not a modest ratio, it is the point. AI is fast at producing
+text. It is not responsible for the result. I am. So I spent my time where
+responsibility actually lives: catching a wrong assumption before it becomes
+code, not patching a bug after it ships.
 
 ## Why planning got the most scrutiny
 
@@ -47,7 +47,14 @@ output directly. I dropped the trick.
 
 **4. Natural output needed a real ear.** A test suite cannot hear that
 Bengali sounds stiff or bookish. I listened myself, and had a second AI pass
-review it with a different persona before trusting either one.
+review it with a different persona before trusting either one — a judgment
+call that mattered enough to become a standing tool
+(`service/tools/bengaliReview.js`) rather than a one-off check. The same
+principle — don't trust a benchmark you wrote yourself, trust real evidence —
+shaped a second tool, `service/tools/reviewTurns.js`: it judges the system's
+actual runtime replies against turns a human really typed or spoke during
+manual QA, deliberately skipping a synthetic prompt suite, because a test you write
+yourself mostly proves you wrote a good test.
 
 ## Safety and responsibility
 
@@ -64,3 +71,7 @@ AI wrote a lot of the words in this project. I decided which ones were true,
 which ones were safe, and which ones stayed. That is the actual job — and
 why I do not trust "AI built it in 10 minutes" stories. The fast part was
 never the hard part.
+
+If you want proof instead of philosophy — the provider strategy, the
+schema-constrained output, the two QA tools mentioned above — it's all in
+`service/README.md`, named and defensible.

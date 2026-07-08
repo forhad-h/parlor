@@ -19,7 +19,7 @@ default; set it empty to opt into on-device English). **The browser WebSocket
 frames are byte-for-byte identical in both modes** — that invariant is the
 whole point; don't break it.
 
-Setup/run instructions: see README.md's "Bengali mode" section and
+Setup/run instructions: see README.md's "Quick start" section and
 `service/README.md` — not duplicated here.
 
 ## Wire contracts (hosted mode)
