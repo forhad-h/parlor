@@ -137,4 +137,4 @@ Python relays each event into the existing WS message shapes as it arrives → b
 
 ---
 
-*For implementation rationale, trade-offs made during development, and the AI-assisted workflow behind this build, see `service/README.md` and `AI-USAGE.md`.*
+*For implementation rationale, trade-offs made during development, and the AI-assisted workflow behind this build, see `service/README.md` and `AI-JOURNEY.md`.*

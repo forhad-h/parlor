@@ -92,7 +92,7 @@ Setup/run instructions: see README.md's "Bengali mode" section and
 
 This work implements `artifacts/10-bengali-localization-implementation-plan.md`.
 Deviations from that plan (all documented in `service/README.md` and
-`AI-USAGE.md`): the raw-PCM assumption became a real MP3 transcode; a
+`AI-JOURNEY.md`): the raw-PCM assumption became a real MP3 transcode; a
 `/strings.bn.js` route was added; a `mock` LLM provider was added for key-free
 runs; hosted mode gates on-device model loading so the app runs without the
 2.6 GB Gemma download; the forced `respond_to_user` tool-call mechanism was

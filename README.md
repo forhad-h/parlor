@@ -13,7 +13,7 @@ or internet required.
 > **Jump to [Quick start (Bengali, default)](#quick-start) ·
 > [On-device English mode](#on-device-english-mode) ·
 > see [`service/README.md`](service/README.md) · [`CLAUDE.md`](CLAUDE.md) ·
-> [`AI-USAGE.md`](AI-USAGE.md).**
+> [`AI-JOURNEY.md`](AI-JOURNEY.md).**
 
 > Bengali is forced as the default intentionally, so the project runs end to
 > end in minutes with just a free API key (or none at all, via the `mock`
