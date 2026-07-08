@@ -422,6 +422,9 @@ this model is selected.
 
 - Understands multiple input languages, transcribes, and replies in Bengali
   only — confirmed with English and Turkish input in the same session.
+  Individual mixed-in words from other languages (e.g. Arabic terms like
+  *Kitabullah*, *Kuraanul Kareem*) also seemed to be understood, though only
+  at the word level, not tested with longer sentences.
 - Robust to background noise — noise present during capture didn't visibly
   affect reply quality.
 - Held the safety line — did not generate unsafe content under testing.
