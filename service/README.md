@@ -255,12 +255,39 @@ Two single-source-of-truth files, deliberately isolated from logic:
 
 Change tone or wording in one place, not scattered call sites.
 
-## Quality: the Bengali QA pass
+## Quality
+
+### Automated Bengali review
 
 `npm run review:bengali` runs a second, adversarial AI pass (native-reviewer
 persona) over both string files and prints a structured report of any stiff or
 literal phrasing — natural, non-robotic Bengali is the named quality bar. Run it
 once before shipping; fixes are one-line edits to the source string files.
+
+### Manual QA notes: `google/gemini-3-flash-preview` (2026-07-08)
+
+Hand-tested over voice, mixing English and Turkish input with a Bengali-only
+reply target (e.g. an English question about *Kitabullah*; Turkish `Bu ne?`
+and `Teşekkür ederim, Görüşmek üzere`). See [Swapping
+providers](#swapping-providers) for how this model is selected.
+
+**Strengths**
+
+- Understands multiple input languages, transcribes, and replies in Bengali
+  only — confirmed with English and Turkish input in the same session.
+- Robust to background noise — noise present during capture didn't visibly
+  affect reply quality.
+- Held the safety line — did not generate unsafe content under testing.
+
+**Limitations**
+
+- TTS pronunciation (Edge, downstream of the LLM's Bengali text) is close to
+  natural but still mispronounces some words, Arabic terms in particular.
+- TTS occasionally fails to play in the browser even though the backend log
+  shows chunks sent correctly — points at a client-side playback issue, not
+  the provider.
+- Audio input is sometimes only partially captured — most noticeable with a
+  longer mid-sentence pause or a low speaking volume.
 
 ## Resilience & observability
 
