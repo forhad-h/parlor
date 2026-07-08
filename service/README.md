@@ -64,13 +64,23 @@ npm start                 # http://localhost:3001, GET /health
 # or: npm run dev         # auto-restart on change
 ```
 
-Then run the Python server (see the repo root README) — hosted/Bengali mode
-is the default, so it routes to this service with no extra flags:
+Then, in a second terminal, run the Python server — hosted/Bengali mode is the
+default, so it routes to this service with no extra flags:
 
 ```bash
+# Install uv if you don't have it:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 cd ../src
-uv run server.py
+uv sync
+uv run server.py          # http://localhost:8000
 ```
+
+Open http://localhost:8000, grant camera and microphone access, and start
+talking — in Bengali. If this Node service isn't running (or its API key is
+missing/invalid), `server.py` prints a startup warning; the app still starts,
+but every turn fails until the Node service is reachable. See the repo root
+README for the on-device English mode and full configuration reference.
 
 ### Run it with no API key
 
