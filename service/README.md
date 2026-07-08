@@ -76,6 +76,11 @@ cd ../src
 uv sync
 uv run server.py          # http://localhost:8000
 ```
+> [!WARNING]
+> `server.py` binds to `0.0.0.0:8000` so it's reachable from other devices on
+> your network, but `0.0.0.0` itself is not a routable address — opening
+> `http://0.0.0.0:8000` in your browser will not work. Use
+> `http://localhost:8000` instead.
 
 Open http://localhost:8000, grant camera and microphone access, and start
 talking — in Bengali. If this Node service isn't running (or its API key is
@@ -91,6 +96,28 @@ end-to-end with zero credentials** (real Edge TTS still speaks):
 ```bash
 LLM_PROVIDER=mock npm start
 ```
+
+### Switching back to the original on-device (English) mode
+
+This Node service isn't involved at all in on-device mode — the switch is a
+single Python-side env var. Either set it inline for one run — not a standard
+pattern, but convenient for a quick demo since it needs no file edit and
+nothing to revert afterward:
+
+```bash
+cd ../src
+NODE_SERVICE_URL= uv run server.py
+```
+
+or persist it in `src/.env`:
+
+```bash
+NODE_SERVICE_URL=
+```
+
+See the repo root [README](../README.md#quick-start) for
+on-device requirements (Apple Silicon or a supported Linux GPU, ~3 GB free
+RAM, ~2.6 GB model download) and setup.
 
 ## Configuration
 
@@ -115,11 +142,13 @@ never a code change:
 
 ```bash
 # Route through OpenRouter instead of calling Gemini directly:
-LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-3-flash-preview npm start
+LLM_PROVIDER=openrouter
+OPENROUTER_MODEL=google/gemini-3-flash-preview npm start
 
 # Dial up to Google's frontier reasoning tier (same family, still audio+JSON-schema
 # capable, ~4x the per-token cost of the flash-preview default):
-LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-3.1-pro-preview npm start
+LLM_PROVIDER=openrouter
+OPENROUTER_MODEL=google/gemini-3.1-pro-preview npm start
 ```
 
 > OpenRouter caveat: audio-input support and reliable JSON-schema-constrained
