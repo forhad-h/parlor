@@ -6,7 +6,11 @@
 <title>Parlor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<!-- Noto Sans Bengali renders Bengali cleanly and matches Android's system Bengali font; Latin fonts kept for the brand + numerals. -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<!-- User-facing strings — single source of truth (see strings.en.js / strings.bn.js).
+     server.py picks which file backs this at request time based on run mode. -->
+<script src="/strings.js"></script>
 <style>
   :root {
     --c-bg: #050509;
@@ -30,7 +34,7 @@
     --glow: var(--c-loading);
     --glow-dim: var(--c-loading-dim);
 
-    --font-body: 'Instrument Sans', system-ui, sans-serif;
+    --font-body: 'Noto Sans Bengali', 'Instrument Sans', system-ui, sans-serif;
     --font-display: 'Syne', system-ui, sans-serif;
   }
 
@@ -96,6 +100,12 @@
     font-weight: 600;
     color: var(--c-text-bright);
     letter-spacing: 0.01em;
+  }
+
+  .lang-badge {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--c-text-dim);
   }
 
   .model-label {
@@ -419,8 +429,9 @@
   <div class="logo">
     <div class="logo-mark"></div>
     <h1>Parlor</h1>
+    <span id="langBadge" class="lang-badge"></span>
   </div>
-  <span class="model-label">Gemma 4 E2B</span>
+  <span id="modelLabel" class="model-label">Gemma 4 E2B</span>
   <div id="status" class="status-pill disconnected">Disconnected</div>
 </header>
 
@@ -446,9 +457,8 @@
       <div id="stateDot" class="dot loading"></div>
       <span id="stateText">Loading...</span>
     </div>
-    <span class="on-device-pill">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="2"/><path d="M5 4V3a3 3 0 0 1 6 0v1"/></svg>
-      On-device
+    <span id="langPill" class="on-device-pill">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="2"/><path d="M5 4V3a3 3 0 0 1 6 0v1"/></svg> On-device
     </span>
   </div>
 </div>
@@ -567,7 +577,12 @@ function setState(newState) {
 
   // Update state indicator
   stateDot.className = `dot ${newState}`;
-  const labels = { loading: 'Loading...', listening: 'Listening', processing: 'Thinking...', speaking: 'Speaking' };
+  const labels = {
+    loading: STRINGS.state.loading,
+    listening: STRINGS.state.listening,
+    processing: STRINGS.state.thinking,
+    speaking: STRINGS.state.speaking,
+  };
   stateText.textContent = labels[newState] || newState;
 
   // Update viewport glow class
@@ -613,11 +628,11 @@ function setState(newState) {
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onopen = () => {
-    setStatus('connected', 'Connected');
+    setStatus('connected', STRINGS.status.connected);
     if (state !== 'loading') setState('listening');
   };
   ws.onclose = () => {
-    setStatus('disconnected', 'Disconnected');
+    setStatus('disconnected', STRINGS.status.disconnected);
     setTimeout(connect, 2000);
   };
   ws.onmessage = ({ data }) => {
@@ -631,7 +646,7 @@ function connect() {
           lastUserMsg.innerHTML = `${msg.transcription}${meta ? meta.outerHTML : ''}`;
         }
       }
-      addMessage('assistant', msg.text, `LLM ${msg.llm_time}s`);
+      addMessage('assistant', msg.text, STRINGS.meta.llm(msg.llm_time));
     } else if (msg.type === 'audio_start') {
       if (ignoreIncomingAudio) return;
       streamSampleRate = msg.sample_rate || 24000;
@@ -648,7 +663,7 @@ function connect() {
       }
       streamTtsTime = msg.tts_time;
       const meta = messagesDiv.querySelector('.msg.assistant:last-child .meta');
-      if (meta) meta.textContent += ` · TTS ${msg.tts_time}s`;
+      if (meta) meta.textContent += STRINGS.meta.tts(msg.tts_time);
     }
   };
 }
@@ -714,8 +729,8 @@ function handleSpeechEnd(audio) {
   const imageBase64 = captureFrame();
 
   setState('processing');
-  setStatus('processing', 'Processing');
-  addMessage('user', '<span class="loading-dots"><span></span><span></span><span></span></span>', imageBase64 ? 'with camera' : '');
+  setStatus('processing', STRINGS.status.processing);
+  addMessage('user', '<span class="loading-dots"><span></span><span></span><span></span></span>', imageBase64 ? STRINGS.withCamera : '');
 
   const payload = { audio: wavBase64 };
   if (imageBase64) payload.image = imageBase64;
@@ -804,7 +819,7 @@ function queueAudioChunk(base64Pcm) {
     if (streamSources.length === 0 && state === 'speaking') {
       currentSource = null;
       setState('listening');
-      setStatus('connected', 'Connected');
+      setStatus('connected', STRINGS.status.connected);
     }
   };
 }
@@ -821,12 +836,28 @@ function addMessage(role, text, meta) {
 cameraToggle.addEventListener('click', () => {
   cameraEnabled = !cameraEnabled;
   cameraToggle.classList.toggle('active', cameraEnabled);
-  cameraToggle.textContent = cameraEnabled ? 'Camera On' : 'Camera Off';
+  cameraToggle.textContent = cameraEnabled ? STRINGS.camera.on : STRINGS.camera.off;
   video.style.opacity = cameraEnabled ? 1 : 0.3;
 });
 
+// Drive the initial DOM from whichever strings file /strings.js resolved to
+// (strings.en.js on-device, strings.bn.js hosted — see server.py) so that file
+// stays the single source of truth. The static HTML carries matching English
+// defaults (the default run mode) only to avoid a flash before this runs.
+function applyStaticStrings() {
+  document.documentElement.lang = STRINGS.htmlLang;
+  document.title = STRINGS.title;
+  $('modelLabel').textContent = STRINGS.modelLabel;
+  $('langBadge').textContent = STRINGS.langBadge;
+  $('langPill').innerHTML = STRINGS.langPill;
+  statusEl.textContent = STRINGS.status.disconnected;
+  stateText.textContent = STRINGS.state.loading;
+  cameraToggle.textContent = STRINGS.camera.on;
+}
+
 // ── Init ──
 async function init() {
+  applyStaticStrings();
   initWaveformCanvas();
   window.addEventListener('resize', initWaveformCanvas);
 
