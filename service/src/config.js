@@ -93,6 +93,13 @@ export const config = Object.freeze({
   cache: Object.freeze({
     tts: bool('CACHE_TTS', true),
   }),
+
+  // Off by default. When on, each real turn's full text (input + spoken
+  // response) plus its latency/token metrics is durably recorded (see
+  // routes/converse.js) so the offline output-quality gate (tools/reviewTurns.js)
+  // has real manual-testing data to review. Off by default because it writes
+  // user conversation content to disk — turn it on only for a QA session.
+  logTurns: bool('LOG_TURNS', false),
 });
 
 /** Keys each provider cannot run without. */

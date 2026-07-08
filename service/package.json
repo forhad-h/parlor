@@ -11,7 +11,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test",
-    "review:bengali": "node tools/bengaliReview.js"
+    "review:bengali": "node tools/bengaliReview.js",
+    "review:turns": "node tools/reviewTurns.js"
   },
   "dependencies": {
     "@google/genai": "^1.9.0",

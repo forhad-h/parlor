@@ -225,6 +225,25 @@ converseRouter.post('/converse', async (req, res, next) => {
       totalMs: Date.now() - startedAt,
       clientGone,
     });
+
+    // Off unless LOG_TURNS is set. Durably persist the *full* turn (input +
+    // spoken response text, not just the metrics the stdout line above carries)
+    // so the offline output-quality gate (tools/reviewTurns.js) has real
+    // manual-testing data to review. Same fire-and-forget durable sink as the
+    // safety events above — no added tail latency.
+    if (config.logTurns) {
+      recordDurableEvent({
+        type: 'turn_metric',
+        sessionId: sessionId ?? null,
+        llmProvider: llmProviderName(),
+        input: transcription ?? text ?? '',
+        responseText: responseForTurn, // what was actually spoken (post-safety substitution)
+        llmMs,
+        ttsMs,
+        promptTokens: usage?.promptTokens ?? null,
+        completionTokens: usage?.completionTokens ?? null,
+      });
+    }
   } catch (err) {
     // Pre-stream failures (nothing written yet) go to the central error handler,
     // which returns a structured non-200 JSON carrying a Bengali apology. Once
