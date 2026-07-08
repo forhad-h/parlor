@@ -46,7 +46,7 @@ export const config = Object.freeze({
     }),
     openRouter: Object.freeze({
       apiKey: str('OPENROUTER_API_KEY'),
-      model: str('OPENROUTER_MODEL', 'google/gemini-2.5-flash'),
+      model: str('OPENROUTER_MODEL', 'google/gemini-3-flash-preview'),
     }),
   }),
 
