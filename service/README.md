@@ -1,5 +1,26 @@
 # Parlor Bengali service (`service/`)
 
+## Highlights
+
+- Built a Bengali voice+vision AI assistant sidecar (Node/Express) that layers
+  hosted LLM+TTS onto an existing Python/WebSocket app with **zero breaking
+  changes** to the wire protocol — the browser's WS frames are byte-for-byte
+  identical whether the backend is on-device or hosted.
+- Designed a provider-agnostic **strategy pattern** for LLM (Gemini ·
+  OpenRouter · mock) and TTS, swappable via a single env var — no code
+  changes to switch providers.
+- Implemented **NDJSON streaming** for progressive audio playback across a
+  process boundary, cutting time-to-first-audio ~18% (more on longer
+  replies), with real cross-process cancellation on barge-in.
+- Added **defense-in-depth safety**: an always-on prompt-level refusal layer,
+  plus input prompt-injection detection and output safety scoring — both
+  gated behind a single `log`/`block` mode switch for measured rollout.
+- Built resilience into every provider call: bounded retry + backoff +
+  per-attempt timeout, enforced rate limiting, request size caps, and
+  structured per-turn cost/latency logging.
+- Wrote an **adversarial AI QA pass** (native-reviewer persona) that audits
+  shipped Bengali strings for unnatural phrasing before release.
+
 A Node sidecar that gives Parlor a **Bengali voice + vision brain**. `server.py`
 calls into it over HTTP for the two "brain" operations — understanding
 (LLM) and speech (TTS) — and relays the result to the browser over the
@@ -79,22 +100,26 @@ never a code change:
 
 ```bash
 # Route through OpenRouter instead of calling Gemini directly:
-LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-2.5-flash npm start
+LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-3-flash-preview npm start
 
-# Dial up to a stronger paid model (same provider family, still audio+JSON-schema capable):
-LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-2.5-pro npm start
+# Dial up to Google's frontier reasoning tier (same family, still audio+JSON-schema
+# capable, ~4x the per-token cost of the flash-preview default):
+LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-3.1-pro-preview npm start
 ```
 
 > OpenRouter caveat: audio-input support and reliable JSON-schema-constrained
 > output (`response_format: json_schema`, `strict: true`) vary by the routed
 > model — most non-Google models on OpenRouter (e.g.
-> `anthropic/claude-3.5-sonnet`) don't accept `input_audio` at all and will
-> error on the first voice turn instead of silently dropping the modality.
-> `OPENROUTER_MODEL` defaults to `google/gemini-2.5-flash`: it's confirmed to
-> accept audio + image + strict JSON-schema output in one request, and Gemini's
-> Bengali output reads more natural than GPT's in this app's testing. Check a
-> model's input modalities on [openrouter.ai/models](https://openrouter.ai/models)
-> before swapping to something else.
+> `anthropic/claude-sonnet-5`, `openai/gpt-5.5`) don't accept `input_audio` at
+> all and will error on the first voice turn instead of silently dropping the
+> modality; as of this writing the only frontier-generation family that does
+> is Google's Gemini 3.x line (plus a couple of narrower audio-only models like
+> `openai/gpt-audio`). `OPENROUTER_MODEL` defaults to `google/gemini-3-flash-preview`:
+> confirmed to accept audio + image + strict JSON-schema output in one request,
+> and Gemini's Bengali output reads more natural than GPT's in this app's
+> testing. Check a model's input modalities on
+> [openrouter.ai/models](https://openrouter.ai/models) before swapping to
+> something else.
 
 ## Design decisions
 
@@ -198,6 +223,12 @@ LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-2.5-pro npm start
   24 kHz PCM16 (pure-WASM, no system ffmpeg). Skipping it breaks playback
   silently. *(Plan note: the plan hoped Edge could emit raw PCM directly; the
   library couldn't, so the predicted transcode step is real — and lives here.)*
+- **`log/` is named for the mechanism, not its first caller.** It started as a
+  safety-specific event log, but an append-only, rotated, swappable-storage
+  writer isn't actually a safety concept — safety just happens to be the only
+  thing writing to it today. Each entry carries a `type` discriminator, so a
+  new kind of durable event is a new `type` value at the call site
+  (`recordDurableEvent`), with no change to the interface itself.
 - **Text-only session history.** History stores the user's transcription and the
   assistant's reply as text, not the raw audio/image blobs — light, coherent
   multi-turn context without re-uploading megabytes. In-memory is sufficient at
@@ -234,7 +265,10 @@ once before shipping; fixes are one-line edits to the source string files.
 ## Resilience & observability
 
 - **Bounded retry + backoff + per-attempt timeout** around every provider call
-  (`util/retry.js`) — free tiers are flaky; one blip shouldn't kill a turn.
+  (`util/retry.js`) — free tiers are flaky; one blip shouldn't kill a turn. Each
+  attempt races against a hard timeout rather than trusting the provider SDK's
+  `AbortSignal` alone, since not every SDK honours it reliably — the timeout is
+  what actually bounds a hung attempt.
 - **Graceful failure.** A hard provider failure returns a structured 502 with a
   ready-to-speak Bengali apology (`errors.js`); `server.py` speaks it over the
   existing `text` frame instead of hanging the socket.
