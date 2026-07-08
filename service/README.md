@@ -56,7 +56,8 @@ Python relays each event into the existing WS frames as it arrives → progressi
 ## Quick start
 
 ```bash
-cd service
+git clone https://github.com/forhad-h/parlor.git
+cd parlor/service
 npm install
 cp .env.example .env      # then add your GEMINI_API_KEY
 
@@ -134,6 +135,48 @@ LLM_PROVIDER=openrouter OPENROUTER_MODEL=google/gemini-3.1-pro-preview npm start
 > testing. Check a model's input modalities on
 > [openrouter.ai/models](https://openrouter.ai/models) before swapping to
 > something else.
+
+## Performance: hosted (Bengali) vs on-device
+
+`benchmarks/bench.py` (root `src/`) talks to the server purely over the
+WebSocket protocol, which is byte-for-byte identical in both modes, so the
+same script runs unmodified against either — just start `server.py` with or
+without `NODE_SERVICE_URL` set. Run on an Apple M2 Pro (a different machine
+than the on-device numbers in the root README), so compare within this table,
+not across it:
+
+| Test                | On-device (Gemma + Kokoro) | Hosted (Gemini + Edge TTS, Bengali)    |
+| -------------------- | --------------------------- | -------------------------------------- |
+| Text only             | 3.80s                       | 4.20s                                  |
+| Audio 2s              | 1.43s                       | 5-28s (rate-limit retries, see below)  |
+| Audio 5s              | 1.84s                       | 5.21s                                  |
+| Image only            | 2.26s                       | 3.69s                                  |
+| Image + audio 2s      | 1.97s                       | 5.68s                                  |
+| Image + audio 5s      | 1.87s                       | 5.64s                                  |
+| **Total (typical)**   | **~2-2.3s**                 | **~4-6s**                              |
+
+Hosted mode is consistently a few seconds slower per turn — expected, since a
+turn is now a network round trip to Gemini + Edge TTS instead of local GPU
+inference. That gap isn't something the TTS cache (`util/cache.js`) closes: it
+only helps *repeated identical* Bengali sentences, and free-form LLM replies
+rarely repeat verbatim.
+
+Two real constraints this run surfaced, worth knowing before a live demo:
+
+- **Free-tier quota.** `gemini-2.5-flash`'s free tier allows ~20 requests/day
+  and a handful per minute. Running the individual-turn and multi-turn
+  benchmarks back to back exhausted it mid-run — visible as `nextRetryMs`
+  backoff in the Node service log, then a hard 429 once daily quota was gone.
+  The retry/backoff logic (`util/retry.js`) behaved correctly; the quota
+  itself is just tight for repeated back-to-back local testing.
+- **A pre-existing on-device crash**, unrelated to this fork: a 5-second-audio
+  turn reliably makes `litert_lm`'s `conversation.send_message` raise
+  (`litert_lm_conversation_send_message failed`), killing that WebSocket
+  connection. Reproducible on the original English/Gemma path too.
+
+Not a voice-quality comparison — on-device speaks English (Kokoro), hosted
+speaks Bengali (Edge) — only the architecture/latency cost of moving off-device
+is comparable here.
 
 ## Design decisions
 
