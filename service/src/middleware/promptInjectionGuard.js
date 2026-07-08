@@ -11,6 +11,16 @@
  * SAFE_REFUSAL) instead of a bare early-return that would break the
  * transcription/responseText/chunks wire contract. Audio is not transcribed at
  * this layer, so only the text channel is inspected.
+ *
+ * Why guard `text` at all when the shipped browser UI (src/index.html) has no
+ * text-input element and only ever sends `{audio, image?}`: the browser WS
+ * endpoint and this HTTP endpoint are both reachable directly by any client
+ * that speaks the protocol (curl, a script, a different frontend), not just
+ * index.html. server.py forwards a client-supplied `text` field verbatim into
+ * the `/converse` payload it POSTs here (see the `if msg.get("text")` branch
+ * in its WS receive loop). So this middleware defends the endpoint's attack
+ * surface, not the shipped page's — the UI having no text box is not a
+ * security boundary and shouldn't be read as making this dead code.
  */
 
 const PATTERNS = [
